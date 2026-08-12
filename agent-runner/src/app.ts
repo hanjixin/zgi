@@ -43,6 +43,7 @@ export function createApp(): Express {
       res.status(400).json({ code: -400, message: err instanceof Error ? err.message : String(err) });
       return;
     }
+    console.log('[agent-runner] run request:', JSON.stringify(req.body));
 
     // The Agent CLIs need a functional host environment (PATH, HOME, ...) to run
     // bash/python/git, so injected keys are merged on top of process.env rather

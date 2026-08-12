@@ -91,7 +91,9 @@ func loadCodexConfig(cfg *Config, source *envSource) {
 	enabled := mustBool(source.bool(false, envCodexEnabled))
 	profile := source.string("session", envCodexProfile)
 	modelProvider := source.string("zgi", envCodexModelProvider)
-	modelName := source.string("codex-default", envCodexModelName)
+	// Empty by default so the real Codex CLI uses its own local model config;
+	// only set ZGI_CODEX_MODEL_NAME to pin a specific model.
+	modelName := source.string("", envCodexModelName)
 	maxSteps := mustInt(source.int(80, envCodexMaxSteps))
 	if maxSteps <= 0 {
 		maxSteps = 80
