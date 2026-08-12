@@ -310,8 +310,19 @@ event: message_end         # status=completed, stream_event_count=5
 
 > 实测回答示例："我是 Claude…，可以帮你完成代码开发、调试、代码审查、架构设计以及调用各类 MCP 工具（文件生成、图表、Agent 配置、数据库等）" —— 证明 MCP 工具（`/console/api/agent-mcp` 暴露的 52 个 ZGI 内置工具）已注入真 Agent。
 
-### 7.6 已知限制
+### 7.6 两个真 Agent 均实测通过（2026-08-12）
 
-- `codex`（OpenAI）路径需本机可用的 `codex` 二进制 + `OPENAI_API_KEY`；本机曾遇二进制损坏（ENOENT）。
+- **Claude Code**（`runtime_type=claude-code`）：✅ SSE 事件流 message_start → skill_call_start(Bash) → skill_call_end → message → message_end(completed)。
+- **Codex**（`runtime_type=codex`）：✅ 同上，事件含 `command_logged`（真 Codex 执行 shell 命令）；回答基于 GPT-5。
+- 两者都走同一链路：Go 驱动 → agent-runner → 真 CLI → SSE 映射回传；MCP 工具对 Claude 生效。
+
+关键修复（本机曾遇）：
+1. **codex 二进制损坏**：`npm i -g @openai/codex` 重装后恢复（ENOENT）。
+2. **codex 默认模型**：`loadCodexConfig` 的 `ZGI_CODEX_MODEL_NAME` 默认由 `codex-default` 改为空，否则真 Codex 用该占位名启动失败（"Reading prompt from stdin…"）。不传模型时 Codex 用本地 `~/.codex/config.toml` 默认。
+3. **codex MCP**：Codex CLI 的 `--config` 点路径展平不支持嵌套 MCP 配置（`env is not supported for streamable_http`），MVP 中 codex 跳过 `mcp_servers`（见 `codex.ts`）；Claude 的 MCP 不受影响。
+
+### 7.7 已知限制
+
 - 邮件注册需要真实 `RESEND_API_KEY`；本地用 7.3 手插数据替代。
 - 审批仍为治理自动决策（`permission_request` 事件已透出，交互式审批 UI 待做）。
+- Codex 的 MCP 工具接入待用 config.toml 文件方式实现（见 7.6-3）。
