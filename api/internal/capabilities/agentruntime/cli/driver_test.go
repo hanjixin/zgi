@@ -19,12 +19,16 @@ type fakeRunner struct {
 	events       []string // SSE data lines (JSON) to stream
 	stopCalls    int
 	permissions  []PermissionRequest
+	lastRun      RunRequest
 }
 
 func (f *fakeRunner) handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/v1/agents/run":
+			var runReq RunRequest
+			_ = json.NewDecoder(r.Body).Decode(&runReq)
+			f.lastRun = runReq
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.Header().Set("X-Accel-Buffering", "no")
 			flusher, _ := w.(http.Flusher)
@@ -103,6 +107,55 @@ func TestCliDriverChatStreamMapsEvents(t *testing.T) {
 	// Bash maps to shell_run, which governance allows → auto-approved.
 	if len(runner.permissions) != 1 || runner.permissions[0].Decision != "approve" {
 		t.Fatalf("expected auto-approve for shell_run, got %#v", runner.permissions)
+	}
+}
+
+func TestCliDriverPassesModelSystemPromptAndMcpServers(t *testing.T) {
+	runner := &fakeRunner{events: []string{
+		dataLine(map[string]interface{}{"type": "session_started", "agent_session_id": "s"}),
+		dataLine(map[string]interface{}{"type": "done", "subtype": "success"}),
+	}}
+	srv := httptest.NewServer(runner.handler())
+	defer srv.Close()
+
+	driver := NewDriver(Options{
+		AgentType:      AgentTypeClaude,
+		Enabled:        true,
+		RunnerURL:      srv.URL,
+		McpServers: []agentruntime.McpServerConfig{
+			{Name: "zgi-tools", Type: "http", URL: "http://zgi.local/mcp", Headers: map[string]string{"X-MCP-API-Key": "k"}},
+		},
+	})
+	agentMcp := []agentruntime.McpServerConfig{{Name: "custom", Type: "stdio", Command: "npx"}}
+	_, err := driver.ChatStream(context.Background(), agentruntime.ChatRequest{
+		AgentID:      uuid.New(),
+		UserID:       uuid.New(),
+		TenantID:     uuid.New(),
+		UserMessage:  "do work",
+		SystemPrompt: "You are an engineer.",
+		ModelName:    "claude-opus",
+		McpServers:   agentMcp,
+	}, nil, nil)
+	if err != nil {
+		t.Fatalf("ChatStream: %v", err)
+	}
+
+	req := runner.lastRun
+	if req.AgentType != AgentTypeClaude {
+		t.Fatalf("agent_type = %q", req.AgentType)
+	}
+	if req.SystemPrompt != "You are an engineer." {
+		t.Fatalf("system_prompt = %q", req.SystemPrompt)
+	}
+	if req.Model != "claude-opus" {
+		t.Fatalf("model = %q", req.Model)
+	}
+	// Default ZGI MCP + per-agent MCP must both be forwarded.
+	if len(req.McpServers) != 2 {
+		t.Fatalf("mcp_servers = %#v, want 2 (default + agent)", req.McpServers)
+	}
+	if req.McpServers[0].Name != "zgi-tools" || req.McpServers[1].Name != "custom" {
+		t.Fatalf("mcp_servers order/names = %#v", req.McpServers)
 	}
 }
 

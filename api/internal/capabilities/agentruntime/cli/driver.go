@@ -321,13 +321,12 @@ func (d *CliDriver) seedMemoryFile(dir, systemPrompt string) error {
 	return os.WriteFile(path, []byte(content), 0o644)
 }
 
-// resolveMcpServers prefers per-agent MCP servers from the chat request and
-// falls back to the globally configured ones.
+// resolveMcpServers combines the globally configured MCP servers (e.g. the ZGI
+// tools bridge) with the per-agent MCP servers from the chat request.
 func (d *CliDriver) resolveMcpServers(req agentruntime.ChatRequest) []agentruntime.McpServerConfig {
-	if len(req.McpServers) > 0 {
-		return req.McpServers
-	}
-	return d.opts.McpServers
+	merged := append([]agentruntime.McpServerConfig{}, d.opts.McpServers...)
+	merged = append(merged, req.McpServers...)
+	return merged
 }
 
 func (d *CliDriver) buildEnv(req agentruntime.ChatRequest) map[string]string {

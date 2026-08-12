@@ -127,6 +127,8 @@ func loadAgentRunnerConfig(cfg *Config, source *envSource) {
 		OpenAIAPIKey:      source.string("", envAgentRunnerOpenAIAPIKey),
 		AllowedTools:      source.csv(nil, envAgentRunnerAllowedTools),
 		DisallowedTools:   source.csv(nil, envAgentRunnerDisallowedTools),
+		McpURL:            source.string("", envAgentRunnerMCPURL),
+		McpAPIKey:         source.string("", envAgentRunnerMCPAPIKey),
 	}
 }
 

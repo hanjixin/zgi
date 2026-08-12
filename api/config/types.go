@@ -90,6 +90,8 @@ type AgentRunnerConfig struct {
 	OpenAIAPIKey      string   `json:"-"`
 	AllowedTools      []string `json:"allowed_tools"`
 	DisallowedTools   []string `json:"disallowed_tools"`
+	McpURL            string   `json:"mcp_url"`
+	McpAPIKey         string   `json:"-"`
 }
 
 type ServerConfig struct {

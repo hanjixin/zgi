@@ -128,9 +128,9 @@ export async function runClaude(req: RunRequest, deps: AdapterDeps): Promise<Ada
 function toClaudeMcp(s: McpServerConfig): Record<string, unknown> {
   switch (s.type) {
     case 'http':
-      return { type: 'http', url: s.url, headers: s.headers };
+      return { type: 'http', url: s.url, headers: s.headers, alwaysLoad: true };
     case 'sse':
-      return { type: 'sse', url: s.url, headers: s.headers };
+      return { type: 'sse', url: s.url, headers: s.headers, alwaysLoad: true };
     default:
       return { type: 'stdio', command: s.command, args: s.args, env: s.env };
   }

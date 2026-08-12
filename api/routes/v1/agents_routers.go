@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	agentruntime "github.com/zgiai/zgi/api/internal/capabilities/agentruntime"
 	"github.com/zgiai/zgi/api/internal/capabilities/agentruntime/cli"
+	"github.com/zgiai/zgi/api/internal/capabilities/agentruntime/mcpbridge"
 	"github.com/zgiai/zgi/api/internal/capabilities/agentruntime/workspace"
 	runtimerepo "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
@@ -102,6 +103,14 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	}
 
 	codexRouter := initAgentRuntimeRouter(db, chatRuntimeService, toolEngine, toolManager, llmClient)
+
+	// Expose ZGI's builtin tools to the real Agent CLIs as an MCP HTTP server.
+	// The agent-runner connects to this via the mcp_servers injected into each
+	// run (see initAgentRuntimeRouter). No session/auth middleware: it is called
+	// back-channel and gated by the optional X-MCP-API-Key shared key.
+	agentCfg := config.Current()
+	mcpServer := mcpbridge.NewServer(toolEngine, toolManager, agentCfg.AgentRunner.McpAPIKey)
+	v1.Any("/agent-mcp", gin.WrapH(mcpServer.Handler()))
 
 	service := app.NewAgentsService(repo, accountService, tenantService, workflowService, chatRuntimeService, agentMemoryService, dataSourceService, knowledgeRetrievalService, resourcePermissionService, enterpriseService, quotaService, fileService, llmClient, defaultModelResolver, db)
 	appHandler := app.NewAgentsHandler(service, tenantService, accountService, enterpriseService, db, chatRuntimeService)
@@ -259,6 +268,18 @@ func initAgentRuntimeRouter(db *gorm.DB, chatRuntimeService runtimeservice.Servi
 	allowedTools := cfg.AgentRunner.AllowedTools
 	disallowedTools := cfg.AgentRunner.DisallowedTools
 
+	// Expose ZGI's builtin tools to the Agent CLIs by default via the MCP
+	// bridge, so every coding agent can call ZGI tools/skills without extra
+	// per-agent configuration.
+	var defaultMcpServers []agentruntime.McpServerConfig
+	if cfg.AgentRunner.McpURL != "" {
+		zgi := agentruntime.McpServerConfig{Name: "zgi-tools", Type: "http", URL: cfg.AgentRunner.McpURL}
+		if cfg.AgentRunner.McpAPIKey != "" {
+			zgi.Headers = map[string]string{"X-MCP-API-Key": cfg.AgentRunner.McpAPIKey}
+		}
+		defaultMcpServers = []agentruntime.McpServerConfig{zgi}
+	}
+
 	// Real OpenAI Codex via the agent-runner (runtime_type=codex).
 	codexDriver := cli.NewDriver(cli.Options{
 		AgentType:       cli.AgentTypeCodex,
@@ -272,6 +293,7 @@ func initAgentRuntimeRouter(db *gorm.DB, chatRuntimeService runtimeservice.Servi
 		APIKey:          cfg.AgentRunner.OpenAIAPIKey,
 		WorkspaceRoot:   cfg.AgentRunner.WorkspaceRoot,
 		AskTimeoutMS:    cfg.AgentRunner.AskTimeoutMS,
+		McpServers:      defaultMcpServers,
 		WorkspaceSvc:    wsService,
 		Governance:      governance,
 	})
@@ -288,6 +310,7 @@ func initAgentRuntimeRouter(db *gorm.DB, chatRuntimeService runtimeservice.Servi
 		APIKey:          cfg.AgentRunner.ClaudeAPIKey,
 		WorkspaceRoot:   cfg.AgentRunner.WorkspaceRoot,
 		AskTimeoutMS:    cfg.AgentRunner.AskTimeoutMS,
+		McpServers:      defaultMcpServers,
 		WorkspaceSvc:    wsService,
 		Governance:      governance,
 	})

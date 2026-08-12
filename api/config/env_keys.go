@@ -53,6 +53,8 @@ const (
 	envAgentRunnerOpenAIAPIKey    = "ZGI_OPENAI_API_KEY"
 	envAgentRunnerAllowedTools    = "ZGI_AGENT_RUNNER_ALLOWED_TOOLS"
 	envAgentRunnerDisallowedTools = "ZGI_AGENT_RUNNER_DISALLOWED_TOOLS"
+	envAgentRunnerMCPURL          = "ZGI_AGENT_MCP_URL"
+	envAgentRunnerMCPAPIKey       = "ZGI_AGENT_MCP_API_KEY"
 )
 
 // Database and cache keys.
