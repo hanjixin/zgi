@@ -207,3 +207,111 @@ POST /agents/:id/chat
 5. **仅新增**数据库列与新表，不修改/删除既有列
 6. **Codex 路由失败时必须回退**到 business 引擎，不能阻塞用户请求
 7. **所有 Codex 配置通过 feature flag 控制**，关闭时 100% 透明
+
+---
+
+## 7. 整栈本地验证（2026-08-12 实测通过）
+
+以下步骤在本地把 **API + agent-runner + 真 Claude Code + MCP** 完整跑通，
+`POST /agents/:id/chat` 端到端返回真实 Claude 回答。用于团队复现与验收。
+
+### 7.1 前置条件
+
+- 本机已装 `claude` CLI（Claude Code）并有 `ANTHROPIC_API_KEY`
+- 可用的 Postgres / Redis（本地 docker，如 `valuz-infra-postgres-1` / `redis-1`）
+- Node >= 20
+
+### 7.2 装配 env 与启动
+
+```bash
+# 1) 生成 api/.env（复制模板后按需覆盖）
+cd api && cp .env.example .env
+
+# 2) 关键覆盖（指向本机 DB/Redis，开启 agent runner）
+#    DB_PORT / DB_USERNAME / DB_PASSWORD / DB_NAME   → 指向你的 Postgres
+#    REDIS_PORT                                      → 指向你的 Redis
+#    SECRET_KEY=…                                    → 随机强密钥
+#    RESEND_API_KEY=dummy…                            → 占位（否则 PUBLIC_DEPLOYMENT_ENABLED=true 会启动校验失败）
+#    ZGI_AGENT_RUNNER_URL=http://localhost:3101
+#    ZGI_CLAUDE_CODE_ENABLED=true
+#    ZGI_CODEX_ENABLED=false
+#    ZGI_AGENT_MCP_URL=http://localhost:2670/console/api/agent-mcp
+#    ZGI_ANTHROPIC_API_KEY=<你的 key>
+#    ZGI_AGENT_RUNNER_WORKSPACE_ROOT=/tmp/zgi-agents
+
+# 3) 迁移 + 启动 API
+cd api && go run ./cmd/migrate up
+go run ./cmd/server          # API :2670
+
+# 4) 启动 agent-runner
+cd agent-runner && npm install && npm run dev     # runner :3101
+```
+
+### 7.3 手插数据（本地无注册/无邮件时的最小集）
+
+认证与权限需要以下行（uuid 自取）：
+
+```sql
+-- 账号（super admin 便于权限直通）
+INSERT INTO accounts (id, name, email, status, is_super_admin, initialized_at, created_at, updated_at)
+VALUES ('<ACCT>','Dev Admin','dev@zgi.ai','active',true,now(),now(),now());
+
+-- 组织 / 工作区 / 成员(owner) —— 权限检查 `members` 表 role=owner 才放行
+INSERT INTO organizations (id, name, status, billing_display_currency, usd_to_cny_rate, created_at, updated_at)
+VALUES ('<ORG>','Dev Org','active','USD',7,now(),now());
+INSERT INTO workspaces (id, name, plan, status, organization_id, created_at, updated_at)
+VALUES ('<ORG>','Dev Workspace','basic','normal','<ORG>',now(),now());
+INSERT INTO members (organization_id, account_id, role, name, status, created_at, updated_at)
+VALUES ('<ORG>','<ACCT>','owner','Dev Admin','active',now(),now());
+
+-- Setup 状态（`SetupRequired` 中间件）
+INSERT INTO zgi_setups (version, setup_at) VALUES ('2026-08-12', now());
+
+-- Agent：runtime_type=claude-code，created_by 指向账号
+INSERT INTO agents (id, tenant_id, name, description, agent_type, web_app_id, web_app_status, enable_api,
+                    runtime_type, runtime_config, created_by, created_at, updated_at)
+VALUES ('<AGENT>','<ORG>','Test Codex Agent','dev agent','assistant','<WEBAPP>','active',false,
+        'claude-code','{}','<ACCT>',now(),now());
+```
+
+> `agent.tenant_id` 同时充当权限检查的 workspaceID，与 JWT 的 `tenant_id` claim 保持一致（见 7.4）。
+
+### 7.4 铸造 JWT
+
+中间件从 JWT 的 `user_id`（账号）与 `tenant_id`（组织）claim 直接解析：
+
+```json
+{"alg":"HS256","typ":"JWT"} . {"user_id":"<ACCT>","tenant_id":"<ORG>","exp":<now+7200>,
+ "iss":"SELF_HOSTED","sub":"Console API Passport"} . <HS256(SECRET_KEY)>
+```
+
+- `SECRET_KEY` = `api/.env` 里的值；`iss` = `platformRunMode`（默认 `SELF_HOSTED`）
+
+### 7.5 端到端调用与期望 SSE 事件
+
+```bash
+curl -sN -X POST "localhost:2670/console/api/agents/<AGENT>/chat" \
+  -H "Authorization: Bearer $JWT" -H 'content-type: application/json' \
+  -d '{"query":"用 Bash 运行 `echo 事件流验证OK` 然后报告"}'
+```
+
+实测完整事件流（5 个事件）：
+
+```
+event: message_start       # 会话开始（conversation_id / message_id）
+event: skill_call_start    # 真 Claude 工具调用 tool_name=Bash, arguments={command:"echo 事件流验证OK"}
+event: skill_call_end      # 工具真实 stdout 回填 result.output="事件流验证OK"
+event: message             # 助手最终文本回答
+event: message_end         # status=completed, stream_event_count=5
+```
+
+对应映射：`message_start`(Go 开场) · `skill_call_start`←runner `tool_use` ·
+`skill_call_end`←runner `tool_result` · `message`←runner `text` · `message_end`←runner `done`。
+
+> 实测回答示例："我是 Claude…，可以帮你完成代码开发、调试、代码审查、架构设计以及调用各类 MCP 工具（文件生成、图表、Agent 配置、数据库等）" —— 证明 MCP 工具（`/console/api/agent-mcp` 暴露的 52 个 ZGI 内置工具）已注入真 Agent。
+
+### 7.6 已知限制
+
+- `codex`（OpenAI）路径需本机可用的 `codex` 二进制 + `OPENAI_API_KEY`；本机曾遇二进制损坏（ENOENT）。
+- 邮件注册需要真实 `RESEND_API_KEY`；本地用 7.3 手插数据替代。
+- 审批仍为治理自动决策（`permission_request` 事件已透出，交互式审批 UI 待做）。
