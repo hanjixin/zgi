@@ -32,6 +32,27 @@ const (
 	// envChatRuntimeModelIdleTimeoutSeconds stops one model call after this many
 	// seconds without any upstream response. Default: 300.
 	envChatRuntimeModelIdleTimeoutSeconds = "CHAT_RUNTIME_MODEL_IDLE_TIMEOUT_SECONDS"
+
+	// Codex runtime keys.
+	envCodexEnabled        = "ZGI_CODEX_ENABLED"
+	envCodexProfile        = "ZGI_CODEX_PROFILE"
+	envCodexModelProvider  = "ZGI_CODEX_MODEL_PROVIDER"
+	envCodexModelName      = "ZGI_CODEX_MODEL_NAME"
+	envCodexMaxSteps       = "ZGI_CODEX_MAX_STEPS"
+	envCodexDefaultSandbox = "ZGI_CODEX_DEFAULT_SANDBOX"
+	envCodexSystemPrompt   = "ZGI_CODEX_SYSTEM_PROMPT"
+
+	// Agent runner keys (real Claude Code / Codex CLI via the agent-runner service).
+	envAgentRunnerURL             = "ZGI_AGENT_RUNNER_URL"
+	envClaudeCodeEnabled          = "ZGI_CLAUDE_CODE_ENABLED"
+	envAgentRunnerWorkspaceRoot   = "ZGI_AGENT_RUNNER_WORKSPACE_ROOT"
+	envAgentRunnerPermissionMode  = "ZGI_AGENT_RUNNER_PERMISSION_MODE"
+	envAgentRunnerAskTimeoutMS    = "ZGI_AGENT_RUNNER_ASK_TIMEOUT_MS"
+	envClaudeCodeModel            = "ZGI_CLAUDE_CODE_MODEL"
+	envAgentRunnerClaudeAPIKey    = "ZGI_ANTHROPIC_API_KEY"
+	envAgentRunnerOpenAIAPIKey    = "ZGI_OPENAI_API_KEY"
+	envAgentRunnerAllowedTools    = "ZGI_AGENT_RUNNER_ALLOWED_TOOLS"
+	envAgentRunnerDisallowedTools = "ZGI_AGENT_RUNNER_DISALLOWED_TOOLS"
 )
 
 // Database and cache keys.

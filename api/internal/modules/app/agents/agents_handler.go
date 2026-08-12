@@ -10,10 +10,12 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
+	agentruntime "github.com/zgiai/zgi/api/internal/capabilities/agentruntime"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
@@ -42,6 +44,7 @@ type AgentsHandler struct {
 	chatRuntimeService         runtimeservice.Service
 	modelPrechecker            llmclient.AppModelPrechecker
 	workflowContinuationRunner workflowContinuationRunner
+	runtimeRouter              *agentruntime.Router
 }
 
 type workflowContinuationRunner interface {
@@ -68,6 +71,12 @@ func NewAgentsHandler(appService AgentsService, tenantService interfaces.Workspa
 		db:                  db,
 		chatRuntimeService:  chatRuntimeService,
 	}
+}
+
+// SetRuntimeRouter injects the Agent Runtime Kernel router for dispatching codex agents.
+// When nil (default), all traffic is handled by the existing business chat runtime.
+func (h *AgentsHandler) SetRuntimeRouter(r *agentruntime.Router) {
+	h.runtimeRouter = r
 }
 
 func (h *AgentsHandler) SetFileService(fileService interfaces.FileService) {
@@ -845,6 +854,13 @@ func (h *AgentsHandler) ChatAgent(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
+
+	if dispatched, err := h.tryRouteToCodex(ctx, c, accountID, organizationID, agentID, req); err != nil {
+		logger.WarnContext(ctx, "codex route failed, falling back to business runtime", "agent_id", agentID, "error", err)
+	} else if dispatched {
+		return
+	}
+
 	draft, err := h.appService.GetAgentDraftRuntimeConfig(ctx, agentID.String(), accountID.String())
 	if err != nil {
 		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
@@ -1520,3 +1536,161 @@ func (h *AgentsHandler) PreviewAgentDeleteImpact(c *gin.Context) {
 	}
 	response.Success(c, impact)
 }
+
+// tryRouteToCodex dispatches the chat request to the Codex driver when the
+// agent declares runtime_type='codex' and the Agent Runtime Kernel is
+// configured. Returns (true, nil) when the request was handled, (false, err)
+// when the route could not be taken so the caller may fall back to the
+// legacy business runtime.
+func (h *AgentsHandler) tryRouteToCodex(
+	ctx context.Context,
+	c *gin.Context,
+	accountID uuid.UUID,
+	organizationID uuid.UUID,
+	agentID uuid.UUID,
+	req runtimedto.ChatRequest,
+) (bool, error) {
+	if h.runtimeRouter == nil {
+		return false, nil
+	}
+	agent, err := h.findAgentByID(ctx, agentID)
+	if err != nil || agent == nil {
+		return false, err
+	}
+	if agent.RuntimeType != string(agentruntime.RuntimeTypeCodex) &&
+		agent.RuntimeType != string(agentruntime.RuntimeTypeClaudeCode) {
+		return false, nil
+	}
+	descriptor := agentruntime.AgentDescriptor{
+		ID:            agent.ID,
+		TenantID:      agent.TenantID,
+		RuntimeType:   agentruntime.RuntimeType(agent.RuntimeType),
+		RuntimeConfig: parseRuntimeConfig(agent.RuntimeConfig),
+	}
+	driver := h.runtimeRouter.Route(ctx, descriptor)
+	if driver == nil {
+		return false, nil
+	}
+	userID := accountID
+	tenantID := organizationID
+	runtimeCfg := descriptor.RuntimeConfig
+	chatReq := agentruntime.ChatRequest{
+		AgentID:      agent.ID,
+		UserID:       userID,
+		TenantID:     tenantID,
+		UserMessage:  req.Query,
+		SystemPrompt: runtimeStringConfig(runtimeCfg, "system_prompt", "systemPrompt"),
+		ModelName:    runtimeStringConfig(runtimeCfg, "model_name", "model", "model_id"),
+		McpServers:   parseMcpServersFromConfig(runtimeCfg),
+	}
+	if req.ConversationID != "" {
+		if parsed, perr := uuid.Parse(req.ConversationID); perr == nil {
+			chatReq.ConversationID = &parsed
+		}
+	}
+	setupAgentSSE(c)
+	startEvt := agentruntime.StreamEvent{
+		ID:        uuid.New(),
+		EventType: "message_start",
+		Payload:   mustMarshalJSON(map[string]interface{}{"conversation_id": chatReq.ConversationIDOrDefault(), "message_id": uuid.New()}),
+		CreatedAt: timeNow(),
+	}
+	_ = writeAgentSSEEvent(c, startEvt.ID.String(), startEvt.EventType, startEvt.Payload)
+
+	result, err := driver.ChatStream(ctx, chatReq,
+		func(chunk string) error {
+			return writeAgentSSE(c, "message", gin.H{
+				"conversation_id": chatReq.ConversationIDOrDefault(),
+				"answer":           chunk,
+			})
+		},
+		func(evt agentruntime.StreamEvent) error {
+			return writeAgentSSEEvent(c, evt.ID.String(), evt.EventType, evt.Payload)
+		},
+	)
+	if err != nil {
+		writeAgentSSE(c, "message_end", gin.H{
+			"conversation_id": chatReq.ConversationIDOrDefault(),
+			"status":          "error",
+			"metadata":        gin.H{"error": err.Error()},
+		})
+		return true, err
+	}
+	if result != nil {
+		writeAgentSSE(c, "message_end", gin.H{
+			"conversation_id": result.ConversationID,
+			"message_id":      result.MessageID,
+			"status":          result.Status,
+			"metadata":        gin.H{"stream_event_count": result.StreamEventCount},
+		})
+	}
+	return true, nil
+}
+
+// findAgentByID fetches the agent row via GORM without altering the
+// repository's existing public surface.
+func (h *AgentsHandler) findAgentByID(ctx context.Context, id uuid.UUID) (*Agent, error) {
+	if h.db == nil {
+		return nil, errors.New("db not configured")
+	}
+	var a Agent
+	if err := h.db.WithContext(ctx).Where("id = ? AND deleted_at IS NULL", id).First(&a).Error; err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
+func parseRuntimeConfig(raw string) map[string]interface{} {
+	out := map[string]interface{}{}
+	if strings.TrimSpace(raw) == "" || raw == "{}" {
+		return out
+	}
+	_ = json.Unmarshal([]byte(raw), &out)
+	return out
+}
+
+// parseMcpServersFromConfig extracts the agent's MCP server list from its
+// runtime_config (key "mcp_servers", an array of McpServerConfig objects).
+func parseMcpServersFromConfig(cfg map[string]interface{}) []agentruntime.McpServerConfig {
+	raw, ok := cfg["mcp_servers"]
+	if !ok || raw == nil {
+		return nil
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return nil
+	}
+	var out []agentruntime.McpServerConfig
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+// runtimeStringConfig reads the first non-empty string value from cfg under any
+// of the given keys (runtime_config JSON values may be strings or JSON-encoded).
+func runtimeStringConfig(cfg map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		v, ok := cfg[key]
+		if !ok {
+			continue
+		}
+		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+func mustMarshalJSON(v interface{}) json.RawMessage {
+	if v == nil {
+		return json.RawMessage(`{}`)
+	}
+	data, err := json.Marshal(v)
+	if err != nil {
+		return json.RawMessage(`{}`)
+	}
+	return data
+}
+
+func timeNow() time.Time { return time.Now() }

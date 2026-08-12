@@ -1,0 +1,28 @@
+{
+  "name": "zgi-agent-runner",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Embeds real Agent CLIs (Claude Code / Codex) via their official SDKs and streams normalized events to the ZGI control plane.",
+  "type": "module",
+  "main": "src/server.ts",
+  "scripts": {
+    "start": "tsx src/server.ts",
+    "dev": "tsx watch src/server.ts",
+    "test": "tsx --test test/*.test.ts",
+    "build": "tsc"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.228",
+    "@openai/codex-sdk": "^0.147.0",
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.2.0",
+    "tsx": "^4.23.12",
+    "typescript": "^7.0.2"
+  }
+}

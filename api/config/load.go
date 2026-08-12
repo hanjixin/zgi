@@ -74,6 +74,8 @@ func loadCoreRuntimeConfig(cfg *Config, source *envSource) error {
 		optionalConfigLoader("platform", loadPlatformConfig),
 		optionalConfigLoader("feature", loadFeatureConfig),
 		optionalConfigLoader("chat runtime", loadChatRuntimeConfig),
+		optionalConfigLoader("codex", loadCodexConfig),
+		optionalConfigLoader("agent runner", loadAgentRunnerConfig),
 	)
 }
 
@@ -83,6 +85,49 @@ func loadChatRuntimeConfig(cfg *Config, source *envSource) {
 		timeout = 300
 	}
 	cfg.ChatRuntime = ChatRuntimeConfig{ModelIdleTimeoutSeconds: timeout}
+}
+
+func loadCodexConfig(cfg *Config, source *envSource) {
+	enabled := mustBool(source.bool(false, envCodexEnabled))
+	profile := source.string("session", envCodexProfile)
+	modelProvider := source.string("zgi", envCodexModelProvider)
+	modelName := source.string("codex-default", envCodexModelName)
+	maxSteps := mustInt(source.int(80, envCodexMaxSteps))
+	if maxSteps <= 0 {
+		maxSteps = 80
+	}
+	defaultSandbox := source.string("zgi-sandbox", envCodexDefaultSandbox)
+	systemPrompt := source.string("", envCodexSystemPrompt)
+
+	cfg.Codex = CodexConfig{
+		Enabled:        enabled,
+		Profile:        profile,
+		ModelProvider:  modelProvider,
+		ModelName:      modelName,
+		MaxSteps:       maxSteps,
+		DefaultSandbox: defaultSandbox,
+		SystemPrompt:   systemPrompt,
+	}
+}
+
+func loadAgentRunnerConfig(cfg *Config, source *envSource) {
+	askTimeoutMS := mustInt(source.int(300_000, envAgentRunnerAskTimeoutMS))
+	if askTimeoutMS <= 0 {
+		askTimeoutMS = 300_000
+	}
+	cfg.AgentRunner = AgentRunnerConfig{
+		URL:               source.string("", envAgentRunnerURL),
+		ClaudeCodeEnabled: mustBool(source.bool(false, envClaudeCodeEnabled)),
+		WorkspaceRoot:     source.string("", envAgentRunnerWorkspaceRoot),
+		PermissionMode:    source.string("acceptEdits", envAgentRunnerPermissionMode),
+		AskTimeoutMS:      askTimeoutMS,
+		ClaudeModel:       source.string("", envClaudeCodeModel),
+		CodexModel:        source.string("", envCodexModelName),
+		ClaudeAPIKey:      source.string("", envAgentRunnerClaudeAPIKey),
+		OpenAIAPIKey:      source.string("", envAgentRunnerOpenAIAPIKey),
+		AllowedTools:      source.csv(nil, envAgentRunnerAllowedTools),
+		DisallowedTools:   source.csv(nil, envAgentRunnerDisallowedTools),
+	}
 }
 
 func loadInfrastructureConfig(cfg *Config, source *envSource) error {

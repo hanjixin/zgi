@@ -63,6 +63,8 @@ type Agent struct {
 	DeletedBy           *uuid.UUID        `gorm:"type:uuid;column:deleted_by" json:"deleted_by"`
 	DeletedAt           *time.Time        `gorm:"column:deleted_at" json:"deleted_at"`
 	Source              AgentSource       `gorm:"-" json:"-"`
+	RuntimeType         string            `gorm:"type:varchar(32);not null;default:'business';column:runtime_type" json:"runtime_type"`
+	RuntimeConfig       string            `gorm:"type:jsonb;not null;default:'{}'::jsonb;column:runtime_config" json:"runtime_config"`
 }
 
 // TableName specifies the table name for Agent.

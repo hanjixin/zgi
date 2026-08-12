@@ -5,8 +5,12 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	agentruntime "github.com/zgiai/zgi/api/internal/capabilities/agentruntime"
+	"github.com/zgiai/zgi/api/internal/capabilities/agentruntime/cli"
+	"github.com/zgiai/zgi/api/internal/capabilities/agentruntime/workspace"
 	runtimerepo "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	app "github.com/zgiai/zgi/api/internal/modules/app/agents"
 	workflow "github.com/zgiai/zgi/api/internal/modules/app/workflow"
@@ -96,8 +100,12 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 			logger.Error("Failed to register chat runtime lease cleanup task", err)
 		}
 	}
+
+	codexRouter := initAgentRuntimeRouter(db, chatRuntimeService, toolEngine, toolManager, llmClient)
+
 	service := app.NewAgentsService(repo, accountService, tenantService, workflowService, chatRuntimeService, agentMemoryService, dataSourceService, knowledgeRetrievalService, resourcePermissionService, enterpriseService, quotaService, fileService, llmClient, defaultModelResolver, db)
 	appHandler := app.NewAgentsHandler(service, tenantService, accountService, enterpriseService, db, chatRuntimeService)
+	appHandler.SetRuntimeRouter(codexRouter)
 	appHandler.SetFileService(fileService)
 	if modelPrechecker, ok := llmClient.(llmclient.AppModelPrechecker); ok {
 		appHandler.SetModelPrechecker(modelPrechecker)
@@ -239,4 +247,54 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	workflowTests.GET("/batches/:batch_id/items", workflowTestHandler.ListBatchItems)
 
 	return service
+}
+
+func initAgentRuntimeRouter(db *gorm.DB, chatRuntimeService runtimeservice.Service, _ *tools.ToolEngine, _ *tools.ToolManager, _ llmclient.LLMClient) *agentruntime.Router {
+	cfg := config.Current()
+
+	businessDriver := agentruntime.NewBusinessDriver(chatRuntimeService)
+	wsService := workspace.NewService(workspace.NewGormRepo(db))
+	governance := agentruntime.NewGovernanceApprovalService()
+
+	allowedTools := cfg.AgentRunner.AllowedTools
+	disallowedTools := cfg.AgentRunner.DisallowedTools
+
+	// Real OpenAI Codex via the agent-runner (runtime_type=codex).
+	codexDriver := cli.NewDriver(cli.Options{
+		AgentType:       cli.AgentTypeCodex,
+		Enabled:         cfg.Codex.Enabled,
+		RunnerURL:       cfg.AgentRunner.URL,
+		Model:           cfg.Codex.ModelName,
+		SandboxMode:     "workspace-write",
+		ApprovalPolicy:  "never",
+		AllowedTools:    allowedTools,
+		DisallowedTools: disallowedTools,
+		APIKey:          cfg.AgentRunner.OpenAIAPIKey,
+		WorkspaceRoot:   cfg.AgentRunner.WorkspaceRoot,
+		AskTimeoutMS:    cfg.AgentRunner.AskTimeoutMS,
+		WorkspaceSvc:    wsService,
+		Governance:      governance,
+	})
+
+	// Real Claude Code via the agent-runner (runtime_type=claude-code).
+	claudeCodeDriver := cli.NewDriver(cli.Options{
+		AgentType:       cli.AgentTypeClaude,
+		Enabled:         cfg.AgentRunner.ClaudeCodeEnabled,
+		RunnerURL:       cfg.AgentRunner.URL,
+		Model:           cfg.AgentRunner.ClaudeModel,
+		PermissionMode:  cfg.AgentRunner.PermissionMode,
+		AllowedTools:    allowedTools,
+		DisallowedTools: disallowedTools,
+		APIKey:          cfg.AgentRunner.ClaudeAPIKey,
+		WorkspaceRoot:   cfg.AgentRunner.WorkspaceRoot,
+		AskTimeoutMS:    cfg.AgentRunner.AskTimeoutMS,
+		WorkspaceSvc:    wsService,
+		Governance:      governance,
+	})
+
+	return agentruntime.NewRouter(
+		agentruntime.WithBusinessDriver(businessDriver),
+		agentruntime.WithCodexDriver(codexDriver),
+		agentruntime.WithClaudeCodeDriver(claudeCodeDriver),
+	)
 }

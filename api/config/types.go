@@ -56,12 +56,40 @@ type Config struct {
 	Automation             AutomationConfig
 	Tooling                ToolingConfig
 	ChatRuntime            ChatRuntimeConfig
+	Codex                  CodexConfig
+	AgentRunner            AgentRunnerConfig
 
 	source *envSource
 }
 
 type ChatRuntimeConfig struct {
 	ModelIdleTimeoutSeconds int `json:"model_idle_timeout_seconds"`
+}
+
+type CodexConfig struct {
+	Enabled        bool   `json:"enabled"`
+	Profile        string `json:"profile"`
+	ModelProvider  string `json:"model_provider"`
+	ModelName      string `json:"model_name"`
+	MaxSteps       int    `json:"max_steps"`
+	DefaultSandbox string `json:"default_sandbox"`
+	SystemPrompt   string `json:"system_prompt"`
+}
+
+// AgentRunnerConfig configures the agent-runner service that embeds the real
+// Agent CLIs (Claude Code / Codex) behind the Agent Runtime Kernel.
+type AgentRunnerConfig struct {
+	URL               string   `json:"url"`
+	ClaudeCodeEnabled bool     `json:"claude_code_enabled"`
+	WorkspaceRoot     string   `json:"workspace_root"`
+	PermissionMode    string   `json:"permission_mode"`
+	AskTimeoutMS      int      `json:"ask_timeout_ms"`
+	ClaudeModel       string   `json:"claude_model"`
+	CodexModel        string   `json:"codex_model"`
+	ClaudeAPIKey      string   `json:"-"`
+	OpenAIAPIKey      string   `json:"-"`
+	AllowedTools      []string `json:"allowed_tools"`
+	DisallowedTools   []string `json:"disallowed_tools"`
 }
 
 type ServerConfig struct {
