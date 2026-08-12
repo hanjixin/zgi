@@ -14,25 +14,20 @@ export interface AdapterResult {
 export async function runCodex(req: RunRequest, deps: AdapterDeps): Promise<AdapterResult> {
   const { emit, emitSession, abortController } = deps;
 
-  // Codex has no direct systemPrompt/mcpServers SDK options, so they are passed
-  // as config.toml overrides (instructions + mcp_servers). The workspace
-  // AGENTS.md seed (Go side) carries long-lived instructions independently.
+  // Codex has no direct systemPrompt SDK option, so it is passed as a
+  // config.toml override (instructions). The workspace AGENTS.md seed (Go side)
+  // carries long-lived instructions independently.
+  //
+  // NOTE: mcp_servers are intentionally NOT passed to Codex via config
+  // overrides: the SDK flattens nested objects to `--config a.b.c=...` dotted
+  // paths, which the Codex config parser rejects for streamable_http servers
+  // ("env is not supported for streamable_http"). Codex MCP integration should
+  // write a real config.toml into the workspace instead (follow-up).
   type ConfigValue = string | number | boolean | ConfigValue[] | { [key: string]: ConfigValue };
   const config: { [key: string]: ConfigValue } = {};
   if (req.systemPrompt) config.instructions = [req.systemPrompt];
   if (req.mcpServers?.length) {
-    const mcp: { [key: string]: ConfigValue } = {};
-    for (const s of req.mcpServers) {
-      mcp[s.name] = {
-        type: s.type,
-        ...(s.command ? { command: s.command } : {}),
-        ...(s.args?.length ? { args: s.args } : {}),
-        ...(s.url ? { url: s.url } : {}),
-        ...(s.headers ? { headers: s.headers } : {}),
-        ...(s.env ? { env: s.env } : {}),
-      };
-    }
-    config.mcp_servers = mcp;
+    process.stderr.write(`[agent-runner] codex: skipping ${req.mcpServers.length} mcp_servers (config-override unsupported by codex)\n`);
   }
 
   const codex = new Codex({
