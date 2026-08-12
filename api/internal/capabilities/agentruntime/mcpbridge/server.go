@@ -13,6 +13,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
 
@@ -45,11 +47,20 @@ func (s *Server) Handler() http.Handler { return http.HandlerFunc(s.ServeHTTP) }
 
 // ServeHTTP handles a single MCP request (Streamable HTTP transport).
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Streamable HTTP session handshake: clients (notably the Codex CLI) expect
+	// an Mcp-Session-Id header; echo an existing one or mint a fresh id. The
+	// server stays stateless but honours the header for client compatibility.
+	sessionID := strings.TrimSpace(r.Header.Get("Mcp-Session-Id"))
+	if sessionID == "" {
+		sessionID = uuid.NewString()
+	}
+	w.Header().Set("Mcp-Session-Id", sessionID)
+
 	if r.Method == http.MethodGet {
-		// GET is used by some clients to probe the server.
+		// GET is used by some clients to probe the server / open an SSE stream.
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"name":    serverName,
-			"version": serverVersion,
+			"name":     serverName,
+			"version":  serverVersion,
 			"protocol": map[string]interface{}{"version": SupportedProtocolVersion},
 		})
 		return
@@ -100,8 +111,17 @@ func (s *Server) handleNotification(method string) {
 func (s *Server) handle(ctx context.Context, method string, params json.RawMessage) (interface{}, *rpcError) {
 	switch method {
 	case "initialize":
+		// Echo the client's requested protocol version when we can; some clients
+		// (e.g. the Codex CLI) reject a server that forces a newer version.
+		version := SupportedProtocolVersion
+		var init struct {
+			ProtocolVersion string `json:"protocolVersion"`
+		}
+		if len(params) > 0 && json.Unmarshal(params, &init) == nil && init.ProtocolVersion != "" {
+			version = init.ProtocolVersion
+		}
 		return map[string]interface{}{
-			"protocolVersion": SupportedProtocolVersion,
+			"protocolVersion": version,
 			"capabilities": map[string]interface{}{
 				"tools": map[string]interface{}{"listChanged": false},
 			},

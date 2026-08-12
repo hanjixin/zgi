@@ -1,8 +1,12 @@
 // Codex adapter — drives the real Codex CLI through the official
 // @openai/codex-sdk (Codex.startThread().runStreamed()). Streams normalized events.
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+
 import { Codex } from '@openai/codex-sdk';
 
-import type { AdapterDeps, RunRequest } from '../protocol.js';
+import type { AdapterDeps, McpServerConfig, RunRequest } from '../protocol.js';
 
 export interface AdapterResult {
   sessionId: string | null;
@@ -10,29 +14,30 @@ export interface AdapterResult {
 
 /**
  * Run one Codex turn.
+ *
+ * Codex has no direct systemPrompt SDK option, so it is passed as a
+ * config.toml override (instructions); the workspace AGENTS.md seed (Go side)
+ * carries long-lived instructions independently.
+ *
+ * MCP servers: the Codex CLI loads them from `$CODEX_HOME/config.toml`, and
+ * the SDK's `--config key=value` flattening cannot express nested mcp_servers.
+ * So a session-scoped `CODEX_HOME` is prepared that copies the user config and
+ * appends the `[mcp_servers.*]` sections (see prepareCodexHome).
  */
 export async function runCodex(req: RunRequest, deps: AdapterDeps): Promise<AdapterResult> {
   const { emit, emitSession, abortController } = deps;
 
-  // Codex has no direct systemPrompt SDK option, so it is passed as a
-  // config.toml override (instructions). The workspace AGENTS.md seed (Go side)
-  // carries long-lived instructions independently.
-  //
-  // NOTE: mcp_servers are intentionally NOT passed to Codex via config
-  // overrides: the SDK flattens nested objects to `--config a.b.c=...` dotted
-  // paths, which the Codex config parser rejects for streamable_http servers
-  // ("env is not supported for streamable_http"). Codex MCP integration should
-  // write a real config.toml into the workspace instead (follow-up).
   type ConfigValue = string | number | boolean | ConfigValue[] | { [key: string]: ConfigValue };
   const config: { [key: string]: ConfigValue } = {};
   if (req.systemPrompt) config.instructions = [req.systemPrompt];
-  if (req.mcpServers?.length) {
-    process.stderr.write(`[agent-runner] codex: skipping ${req.mcpServers.length} mcp_servers (config-override unsupported by codex)\n`);
-  }
+
+  const codexHome = await prepareCodexHome(req);
+  const env: Record<string, string> = { ...(process.env as Record<string, string>), ...req.env };
+  if (codexHome) env.CODEX_HOME = codexHome;
 
   const codex = new Codex({
     apiKey: req.env.OPENAI_API_KEY || req.env.CODEX_API_KEY || process.env.OPENAI_API_KEY,
-    env: req.env,
+    env,
     config,
   });
   const thread = codex.startThread({
@@ -114,4 +119,77 @@ export async function runCodex(req: RunRequest, deps: AdapterDeps): Promise<Adap
     }
     return { sessionId };
   }
+}
+
+/**
+ * Prepare a session-scoped Codex config home that carries the user's config
+ * plus the requested mcp_servers. Codex reads `$CODEX_HOME/config.toml`; the
+ * SDK's `-c key=value` overrides cannot express nested MCP servers, so we merge
+ * a real config.toml instead.
+ *
+ * Returns the config home dir, or null when no MCP servers are requested (the
+ * user's real CODEX_HOME is left untouched).
+ */
+async function prepareCodexHome(req: RunRequest): Promise<string | null> {
+  if (!req.mcpServers?.length) return null;
+
+  const userHome = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
+  const sessionHome = path.join(req.cwd, '.codex');
+  await fs.mkdir(sessionHome, { recursive: true });
+
+  // Carry the user's existing config forward (model, provider, auth) so a
+  // session-scoped HOME does not silently change the agent's defaults.
+  const userConfigPath = path.join(userHome, 'config.toml');
+  const sessionConfigPath = path.join(sessionHome, 'config.toml');
+  try {
+    await fs.copyFile(userConfigPath, sessionConfigPath);
+  } catch {
+    // no user config file — start fresh
+  }
+
+  const mcpToml = serializeMcpServers(req.mcpServers);
+  const existing = await fs.readFile(sessionConfigPath, 'utf8').catch(() => '');
+  await fs.writeFile(sessionConfigPath, existing.trimEnd() + (existing.trim() ? '\n\n' : '') + mcpToml + '\n');
+  return sessionHome;
+}
+
+/** Serialize MCP servers as TOML `[mcp_servers.*]` sections. */
+function serializeMcpServers(servers: McpServerConfig[]): string {
+  const lines: string[] = [];
+  for (const s of servers) {
+    lines.push(`[mcp_servers.${tomlKey(s.name)}]`);
+    lines.push(`type = "${codexMcpType(s.type)}"`);
+    lines.push('enabled = true');
+    if (s.url) lines.push(`url = ${tomlString(s.url)}`);
+    if (s.command) lines.push(`command = ${tomlString(s.command)}`);
+    if (s.args?.length) lines.push(`args = [${s.args.map(tomlString).join(', ')}]`);
+    if (s.headers && Object.keys(s.headers).length) lines.push(`headers = ${tomlInlineTable(s.headers)}`);
+    if (s.env && Object.keys(s.env).length) lines.push(`env = ${tomlInlineTable(s.env)}`);
+    lines.push('');
+  }
+  return lines.join('\n');
+}
+
+function codexMcpType(type: string): string {
+  switch (type) {
+    case 'sse':
+      return 'sse';
+    case 'stdio':
+      return 'stdio';
+    default:
+      return 'streamable_http';
+  }
+}
+
+function tomlKey(name: string): string {
+  return name.replace(/[^A-Za-z0-9_-]/g, '_');
+}
+
+function tomlString(value: string): string {
+  return JSON.stringify(value);
+}
+
+function tomlInlineTable(map: Record<string, string>): string {
+  const entries = Object.entries(map).map(([k, v]) => `${tomlKey(k)} = ${tomlString(v)}`);
+  return `{ ${entries.join(', ')} }`;
 }
