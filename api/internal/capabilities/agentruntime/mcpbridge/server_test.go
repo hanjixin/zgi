@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
@@ -148,6 +150,75 @@ func TestMCPUnknownMethod(t *testing.T) {
 	}
 	if resp.Error == nil || resp.Error.Code != errMethod {
 		t.Fatalf("expected method-not-found error, got %#v", resp)
+	}
+}
+
+// TestMCPSSEHandshake verifies the Streamable HTTP GET handshake Codex's MCP
+// client requires: a 200 whose Content-Type is text/event-stream (anything
+// else is an "unexpected content type" failure), an Mcp-Session-Id header, and
+// a stream that stays open until the client disconnects.
+func TestMCPSSEHandshake(t *testing.T) {
+	srv, _ := newTestServer("")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req := httptest.NewRequest(http.MethodGet, "/", nil).WithContext(ctx)
+	req.Header.Set("Accept", "text/event-stream")
+	w := httptest.NewRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		srv.ServeHTTP(w, req)
+	}()
+
+	// Give the handler a moment to write headers, then cancel to release it.
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not release after context cancel")
+	}
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("content-type = %q, want text/event-stream", ct)
+	}
+	if w.Header().Get("Mcp-Session-Id") == "" {
+		t.Fatal("Mcp-Session-Id header not set")
+	}
+	if !strings.Contains(w.Body.String(), ": connected") {
+		t.Fatalf("body = %q, want ': connected' comment", w.Body.String())
+	}
+}
+
+// TestMCPGetProbeKeepsJSON verifies a GET that does not ask for the SSE
+// transport (e.g. a browser probe) keeps the old JSON info response.
+func TestMCPGetProbeKeepsJSON(t *testing.T) {
+	srv, _ := newTestServer("")
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Fatalf("content-type = %q, want application/json", ct)
+	}
+}
+
+// TestMCPSSEAuthRequired verifies the SSE handshake honours the shared key the
+// same way POST does.
+func TestMCPSSEAuthRequired(t *testing.T) {
+	srv, _ := newTestServer("secret-key")
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Accept", "text/event-stream")
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", w.Code)
 	}
 }
 

@@ -281,12 +281,17 @@ func initAgentRuntimeRouter(db *gorm.DB, chatRuntimeService runtimeservice.Servi
 	}
 
 	// Real OpenAI Codex via the agent-runner (runtime_type=codex).
+	// danger-full-access: Codex 0.125+ auto-cancels MCP tool calls (e.g. the
+	// zgi-tools bridge) under managed sandbox profiles (read-only /
+	// workspace-write), surfacing "user cancelled MCP tool call" — only the
+	// unsandboxed mode lets MCP tools actually execute. Verified against
+	// codex-cli 0.147.0.
 	codexDriver := cli.NewDriver(cli.Options{
 		AgentType:       cli.AgentTypeCodex,
 		Enabled:         cfg.Codex.Enabled,
 		RunnerURL:       cfg.AgentRunner.URL,
 		Model:           cfg.Codex.ModelName,
-		SandboxMode:     "workspace-write",
+		SandboxMode:     "danger-full-access",
 		ApprovalPolicy:  "never",
 		AllowedTools:    allowedTools,
 		DisallowedTools: disallowedTools,

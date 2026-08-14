@@ -2,8 +2,11 @@
 // (Model Context Protocol) HTTP server, so the real Agent CLIs (Claude Code /
 // Codex) can call ZGI tools and skills through the agent-runner's mcp_servers.
 //
-// Transport: MCP "Streamable HTTP" — a single POST per JSON-RPC message. The
-// server is stateless, so no session ids are required.
+// Transport: MCP "Streamable HTTP" — a POST per JSON-RPC message plus a GET
+// that opens the SSE session stream (required by Codex's client, which treats
+// any non-`text/event-stream` GET response as a failed handshake). The server
+// is stateless, so no session state is persisted; an Mcp-Session-Id is still
+// minted and echoed for client compatibility.
 package mcpbridge
 
 import (
@@ -57,12 +60,41 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Mcp-Session-Id", sessionID)
 
 	if r.Method == http.MethodGet {
-		// GET is used by some clients to probe the server / open an SSE stream.
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"name":     serverName,
-			"version":  serverVersion,
-			"protocol": map[string]interface{}{"version": SupportedProtocolVersion},
-		})
+		// Streamable HTTP session handshake. Codex's MCP client (the rmcp
+		// streamable_http client) opens an SSE stream with a GET and treats any
+		// response whose Content-Type is not text/event-stream as an
+		// "unexpected content type" handshake failure. This server is stateless
+		// and never writes server-initiated messages, so the stream is simply
+		// held open for the life of the session. GETs that do not ask for the
+		// SSE transport (e.g. browser probes) keep the old JSON info response.
+		if !acceptsEventStream(r) {
+			writeJSON(w, http.StatusOK, map[string]interface{}{
+				"name":     serverName,
+				"version":  serverVersion,
+				"protocol": map[string]interface{}{"version": SupportedProtocolVersion},
+			})
+			return
+		}
+		if !s.authorized(r) {
+			writeJSON(w, http.StatusUnauthorized, rpcErrorJSON(nil, errInvalidReq, "invalid or missing X-MCP-API-Key"))
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache, no-transform")
+		w.Header().Set("Connection", "keep-alive")
+		w.WriteHeader(http.StatusOK)
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			// No streaming support (unusual); nothing useful to send. Close the
+			// handshake so the client can re-initialize.
+			return
+		}
+		// A comment line confirms liveness and flushes the headers; SSE
+		// clients skip events without data, so this is inert.
+		_, _ = w.Write([]byte(": connected\n\n"))
+		flusher.Flush()
+		// Hold the stream open until the client disconnects.
+		<-r.Context().Done()
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -101,6 +133,17 @@ func (s *Server) authorized(r *http.Request) bool {
 	}
 	got := strings.TrimSpace(r.Header.Get("X-MCP-API-Key"))
 	return got != "" && got == s.apiKey
+}
+
+// acceptsEventStream reports whether the request asks for the SSE transport
+// (the Streamable HTTP GET handshake used by Codex's MCP client).
+func acceptsEventStream(r *http.Request) bool {
+	for _, part := range strings.Split(r.Header.Get("Accept"), ",") {
+		if strings.HasPrefix(strings.TrimSpace(part), "text/event-stream") {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) handleNotification(method string) {

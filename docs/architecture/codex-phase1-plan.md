@@ -319,10 +319,10 @@ event: message_end         # status=completed, stream_event_count=5
 关键修复（本机曾遇）：
 1. **codex 二进制损坏**：`npm i -g @openai/codex` 重装后恢复（ENOENT）。
 2. **codex 默认模型**：`loadCodexConfig` 的 `ZGI_CODEX_MODEL_NAME` 默认由 `codex-default` 改为空，否则真 Codex 用该占位名启动失败（"Reading prompt from stdin…"）。不传模型时 Codex 用本地 `~/.codex/config.toml` 默认。
-3. **codex MCP**：Codex CLI 的 `--config` 点路径展平不支持嵌套 MCP 配置（`env is not supported for streamable_http`），MVP 中 codex 跳过 `mcp_servers`（见 `codex.ts`）；Claude 的 MCP 不受影响。
+3. **codex MCP**：Codex 的 MCP server 通过 SDK `config` 的 `--config` 点路径逐键注入（`mcp_servers.<name>.url=…`、`http_headers.<KEY>=…`），map 字段必须逐键、不能发内联表（`env` 仅 stdio 支持，streamable_http 会拒绝）；见 `codex.ts::buildMcpServersConfig`。Claude 的 MCP 不受影响。
 
 ### 7.7 已知限制
 
 - 邮件注册需要真实 `RESEND_API_KEY`；本地用 7.3 手插数据替代。
 - 审批仍为治理自动决策（`permission_request` 事件已透出，交互式审批 UI 待做）。
-- Codex 的 MCP 工具接入待用 config.toml 文件方式实现（见 7.6-3）。
+- Codex 的 MCP 已通过 `--config` 点路径逐键注入接通（见 7.6-3）；`mcpbridge` 的 Streamable HTTP GET/SSE 会话握手已补齐（`server.go` 对 `Accept: text/event-stream` 返回 `text/event-stream` 流），Codex 客户端可完成握手。
