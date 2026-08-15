@@ -93,12 +93,6 @@ func (h *AgentsHandler) tryRegenerateToCodex(c *gin.Context, runtimeCtx agentRun
 		EnabledSkillIDs: parseEnabledSkillIDs(runtimeCfg),
 		ConversationID:  &original.ConversationID,
 	}
-	if history := h.buildConversationHistory(ctx, original.ConversationID, runtimeCtx.Scope.OrganizationID, runtimeCtx.Scope.AccountID); history != "" {
-		if chatReq.SystemPrompt != "" {
-			chatReq.SystemPrompt += "\n\n"
-		}
-		chatReq.SystemPrompt += "## Previous conversation\n\n" + history
-	}
 	// Regeneration is simply a fresh execution of the query through the unified
 	// chatstream interceptor — it owns the conversation/message persistence and
 	// the SSE message envelope, and streams the new answer live. The CLI session

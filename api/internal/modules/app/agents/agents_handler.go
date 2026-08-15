@@ -1613,14 +1613,6 @@ func (h *AgentsHandler) tryRouteToCodex(
 	if req.ConversationID != "" {
 		if parsed, perr := uuid.Parse(req.ConversationID); perr == nil {
 			chatReq.ConversationID = &parsed
-			// Feed the prior conversation into the agent's context so codex/
-			// claude can continue even when the CLI session is lost.
-			if history := h.buildConversationHistory(ctx, parsed, organizationID, accountID); history != "" {
-				if chatReq.SystemPrompt != "" {
-					chatReq.SystemPrompt += "\n\n"
-				}
-				chatReq.SystemPrompt += "## Previous conversation\n\n" + history
-			}
 		}
 	}
 	// Attachments from the chat request become a context block the agent CLI
@@ -1775,34 +1767,6 @@ func truncateAgentContentRunes(s string, limit int) string {
 		return s
 	}
 	return string(runes[:limit]) + "\n…[truncated]"
-}
-
-// buildConversationHistory formats the most recent messages of a conversation
-// as a transcript the real Agent CLI (codex/claude) can use as context.
-func (h *AgentsHandler) buildConversationHistory(ctx context.Context, conversationID, organizationID, accountID uuid.UUID) string {
-	if h.db == nil {
-		return ""
-	}
-	msgs, _, err := runtimerepo.NewRepositories(h.db).Message.ListByConversationScoped(ctx, conversationID, organizationID, accountID, 20, 0)
-	if err != nil {
-		return ""
-	}
-	var b strings.Builder
-	// ListByConversationScoped returns newest first; reverse to chronological.
-	for i := len(msgs) - 1; i >= 0; i-- {
-		m := msgs[i]
-		if m.Query != "" {
-			b.WriteString("user: ")
-			b.WriteString(m.Query)
-			b.WriteString("\n")
-		}
-		if m.Answer != "" {
-			b.WriteString("assistant: ")
-			b.WriteString(m.Answer)
-			b.WriteString("\n")
-		}
-	}
-	return b.String()
 }
 
 // findAgentByID fetches the agent row via GORM without altering the
