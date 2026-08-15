@@ -40,15 +40,29 @@ func InitDB(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		},
 	)
 
-	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%d sslmode=%s timezone=%s",
+	// Build the DSN with keyword-value pairs. When the password is empty, the
+	// `password=` keyword must be omitted entirely: the pgx driver misparses an
+	// empty-valued `password=` and silently drops the `dbname` keyword, causing
+	// every connection to default to the `postgres` database.
+	dsn := fmt.Sprintf("host=%s user=%s dbname=%s port=%d sslmode=%s timezone=%s",
 		cfg.Host,
 		cfg.Username,
-		cfg.Password,
 		cfg.DBName,
 		cfg.Port,
 		cfg.SSLMode,
 		cfg.Timezone,
 	)
+	if cfg.Password != "" {
+		dsn = fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%d sslmode=%s timezone=%s",
+			cfg.Host,
+			cfg.Username,
+			cfg.Password,
+			cfg.DBName,
+			cfg.Port,
+			cfg.SSLMode,
+			cfg.Timezone,
+		)
+	}
 
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
 		Logger: newLogger, // Use custom logger with Info level for debugging

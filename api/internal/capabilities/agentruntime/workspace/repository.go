@@ -45,7 +45,7 @@ func (Workspace) TableName() string { return "codex_workspaces" }
 
 type SessionSnapshotRecord struct {
 	ID             uuid.UUID  `gorm:"type:uuid;primaryKey;default:uuid_generate_v4()" json:"id"`
-	SessionID      uuid.UUID  `gorm:"type:uuid;not null;index:idx_codex_sessions_conversation" json:"session_id"`
+	SessionID      uuid.UUID  `gorm:"type:uuid;not null;index:idx_codex_sessions_session_id" json:"session_id"`
 	AgentID        uuid.UUID  `gorm:"type:uuid;not null;index:idx_codex_sessions_agent" json:"agent_id"`
 	WorkspaceID    uuid.UUID  `gorm:"type:uuid;not null" json:"workspace_id"`
 	ConversationID uuid.UUID  `gorm:"type:uuid;not null;uniqueIndex" json:"conversation_id"`

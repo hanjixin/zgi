@@ -406,6 +406,12 @@ func (d *CliDriver) resolveMcpServers(req agentruntime.ChatRequest) []agentrunti
 
 func (d *CliDriver) buildEnv(req agentruntime.ChatRequest, gatewayKey string) map[string]string {
 	env := map[string]string{}
+	// Agent CLIs talk to the local MCP bridge and LLM gateway on localhost.
+	// The codex/claude HTTP clients honour the system proxy (e.g. macOS
+	// network proxy at 127.0.0.1:7897), which hijacks localhost requests and
+	// returns 502. Pin NO_PROXY so control-plane traffic stays direct.
+	env["NO_PROXY"] = "localhost,127.0.0.1,::1"
+	env["no_proxy"] = "localhost,127.0.0.1,::1"
 	// Route codex/claude through the ZGI LLM gateway using the org's API key.
 	// Usage meters through that key's quota (gateway QuotaSubjectType=api_key).
 	if d.opts.LLMGatewayURL != "" && gatewayKey != "" {
