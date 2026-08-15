@@ -60,6 +60,10 @@ type ChatRequest struct {
 	ModelName       string          `json:"model_name,omitempty"`
 	ModelParameters json.RawMessage `json:"model_parameters,omitempty"`
 	McpServers      []McpServerConfig `json:"mcp_servers,omitempty"`
+	// EnabledSkillIDs are the agent's bound skills (runtime_config
+	// enabled_skill_ids). When non-empty, the skillstools MCP tools only expose
+	// these skills, matching the business runtime's per-agent skill binding.
+	EnabledSkillIDs []string       `json:"enabled_skill_ids,omitempty"`
 	Metadata        json.RawMessage `json:"metadata,omitempty"`
 }
 

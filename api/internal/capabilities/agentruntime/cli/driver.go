@@ -397,6 +397,9 @@ func (d *CliDriver) resolveMcpServers(req agentruntime.ChatRequest) []agentrunti
 		}
 		merged[i].Headers["X-Zgi-Agent-Id"] = req.AgentID.String()
 		merged[i].Headers["X-Zgi-Conversation-Id"] = sessionID.String()
+		if len(req.EnabledSkillIDs) > 0 {
+			merged[i].Headers["X-Zgi-Enabled-Skills"] = strings.Join(req.EnabledSkillIDs, ",")
+		}
 	}
 	return merged
 }

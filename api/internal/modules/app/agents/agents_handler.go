@@ -1576,13 +1576,14 @@ func (h *AgentsHandler) tryRouteToCodex(
 	tenantID := organizationID
 	runtimeCfg := descriptor.RuntimeConfig
 	chatReq := agentruntime.ChatRequest{
-		AgentID:      agent.ID,
-		UserID:       userID,
-		TenantID:     tenantID,
-		UserMessage:  req.Query,
-		SystemPrompt: runtimeStringConfig(runtimeCfg, "system_prompt", "systemPrompt"),
-		ModelName:    runtimeStringConfig(runtimeCfg, "model_name", "model", "model_id"),
-		McpServers:   parseMcpServersFromConfig(runtimeCfg),
+		AgentID:         agent.ID,
+		UserID:          userID,
+		TenantID:        tenantID,
+		UserMessage:     req.Query,
+		SystemPrompt:    runtimeStringConfig(runtimeCfg, "system_prompt", "systemPrompt"),
+		ModelName:       runtimeStringConfig(runtimeCfg, "model_name", "model", "model_id"),
+		McpServers:      parseMcpServersFromConfig(runtimeCfg),
+		EnabledSkillIDs: parseEnabledSkillIDs(runtimeCfg),
 	}
 	if req.ConversationID != "" {
 		if parsed, perr := uuid.Parse(req.ConversationID); perr == nil {
@@ -1595,6 +1596,16 @@ func (h *AgentsHandler) tryRouteToCodex(
 				}
 				chatReq.SystemPrompt += "## Previous conversation\n\n" + history
 			}
+		}
+	}
+	// Attachments from the chat request become a context block the agent CLI
+	// can fetch/read.
+	if len(req.FileIDs) > 0 && h.fileService != nil {
+		if attachments := h.buildAttachmentsContext(ctx, req.FileIDs); attachments != "" {
+			if chatReq.SystemPrompt != "" {
+				chatReq.SystemPrompt += "\n\n"
+			}
+			chatReq.SystemPrompt += "## Attachments\n\n" + attachments
 		}
 	}
 	// One message id anchors every event of this turn (message / skill_call_*)
@@ -1646,6 +1657,33 @@ func (h *AgentsHandler) tryRouteToCodex(
 	return true, nil
 }
 
+// buildAttachmentsContext lists the chat request's file attachments as a
+// context block the real Agent CLI can fetch/read.
+func (h *AgentsHandler) buildAttachmentsContext(ctx context.Context, fileIDs []string) string {
+	if h.fileService == nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, id := range fileIDs {
+		f, err := h.fileService.GetFileByID(ctx, id)
+		if err != nil || f == nil {
+			continue
+		}
+		name := f.Name
+		if name == "" {
+			name = id
+		}
+		b.WriteString("- ")
+		b.WriteString(name)
+		if url, err := h.fileService.GetFileURL(ctx, id); err == nil && url != "" {
+			b.WriteString(": ")
+			b.WriteString(url)
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
 // buildConversationHistory formats the most recent messages of a conversation
 // as a transcript the real Agent CLI (codex/claude) can use as context.
 func (h *AgentsHandler) buildConversationHistory(ctx context.Context, conversationID, organizationID, accountID uuid.UUID) string {
@@ -1693,6 +1731,31 @@ func parseRuntimeConfig(raw string) map[string]interface{} {
 		return out
 	}
 	_ = json.Unmarshal([]byte(raw), &out)
+	return out
+}
+
+// parseEnabledSkillIDs extracts the agent's bound skill ids from runtime_config
+// (key "enabled_skill_ids", a JSON array of strings).
+func parseEnabledSkillIDs(cfg map[string]interface{}) []string {
+	raw, ok := cfg["enabled_skill_ids"]
+	if !ok || raw == nil {
+		return nil
+	}
+	var out []string
+	switch v := raw.(type) {
+	case []interface{}:
+		for _, item := range v {
+			if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
+				out = append(out, s)
+			}
+		}
+	case []string:
+		out = append(out, v...)
+	case string:
+		if s := strings.TrimSpace(v); s != "" {
+			_ = json.Unmarshal([]byte(s), &out)
+		}
+	}
 	return out
 }
 

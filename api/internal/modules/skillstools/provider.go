@@ -64,6 +64,7 @@ func (t *listSkillsTool) Invoke(ctx context.Context, _ string, _ map[string]inte
 	if err != nil {
 		return nil, err
 	}
+	skillsList = filterEnabledSkills(skillsList, enabledSkillIDs(t.Runtime()))
 	return jsonMessages(map[string]interface{}{"skills": skillsList})
 }
 
@@ -94,6 +95,9 @@ func (t *runSkillTool) Invoke(ctx context.Context, userID string, params map[str
 	skillID := stringValue(params, "skill_id")
 	if skillID == "" {
 		return nil, fmt.Errorf("skill_id is required")
+	}
+	if enabled := enabledSkillIDs(t.Runtime()); enabled != nil && !contains(enabled, skillID) {
+		return nil, fmt.Errorf("skill %s is not enabled for this agent", skillID)
 	}
 	args := map[string]interface{}{}
 	if raw := stringValue(params, "arguments"); raw != "" {
@@ -160,6 +164,60 @@ func skillsToolEntity(name, labelEN, labelZH, description string, params []tools
 		OutputType: "json",
 		Tags:       []string{"skills", "system"},
 	}
+}
+
+// enabledSkillIDs reads the agent's bound skill ids from the tool runtime.
+// Returns nil when no constraint is set (all system skills available), or a
+// non-empty list to filter against.
+func enabledSkillIDs(runtime *tools.ToolRuntime) []string {
+	if runtime == nil || runtime.RuntimeParameters == nil {
+		return nil
+	}
+	raw, ok := runtime.RuntimeParameters["enabled_skill_ids"]
+	if !ok {
+		return nil
+	}
+	var out []string
+	switch v := raw.(type) {
+	case []string:
+		out = append(out, v...)
+	case []interface{}:
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+	}
+	if len(out) == 0 {
+		return []string{}
+	}
+	return out
+}
+
+func filterEnabledSkills(list []skills.SkillDiscoveryMetadata, enabled []string) []skills.SkillDiscoveryMetadata {
+	if enabled == nil {
+		return list
+	}
+	allowed := map[string]struct{}{}
+	for _, id := range enabled {
+		allowed[id] = struct{}{}
+	}
+	out := make([]skills.SkillDiscoveryMetadata, 0, len(list))
+	for _, s := range list {
+		if _, ok := allowed[s.ID]; ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func contains(list []string, want string) bool {
+	for _, item := range list {
+		if item == want {
+			return true
+		}
+	}
+	return false
 }
 
 func stringValue(params map[string]interface{}, key string) string {

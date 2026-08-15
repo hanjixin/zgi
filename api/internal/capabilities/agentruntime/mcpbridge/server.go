@@ -255,6 +255,12 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (interfac
 		invokeReq.TenantID = id.TenantID
 		invokeReq.ConversationID = id.ConversationID
 		invokeReq.AppID = id.AgentID
+		if len(id.EnabledSkills) > 0 {
+			if invokeReq.RuntimeParameters == nil {
+				invokeReq.RuntimeParameters = map[string]interface{}{}
+			}
+			invokeReq.RuntimeParameters["enabled_skill_ids"] = id.EnabledSkills
+		}
 	}
 	result, err := s.engine.Invoke(ctx, invokeReq)
 	if err != nil {

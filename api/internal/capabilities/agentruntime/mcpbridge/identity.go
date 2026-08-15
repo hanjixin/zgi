@@ -15,6 +15,7 @@ type mcpIdentity struct {
 	WorkspaceID    string
 	AgentID        string
 	ConversationID string
+	EnabledSkills  []string
 }
 
 type mcpIdentityKey struct{}
@@ -29,6 +30,13 @@ func identityFromRequest(ctx context.Context, r *http.Request) context.Context {
 		WorkspaceID:    strings.TrimSpace(r.Header.Get("X-Zgi-Workspace-Id")),
 		AgentID:        strings.TrimSpace(r.Header.Get("X-Zgi-Agent-Id")),
 		ConversationID: strings.TrimSpace(r.Header.Get("X-Zgi-Conversation-Id")),
+	}
+	if raw := strings.TrimSpace(r.Header.Get("X-Zgi-Enabled-Skills")); raw != "" {
+		for _, part := range strings.Split(raw, ",") {
+			if s := strings.TrimSpace(part); s != "" {
+				id.EnabledSkills = append(id.EnabledSkills, s)
+			}
+		}
 	}
 	return context.WithValue(ctx, mcpIdentityKey{}, id)
 }
