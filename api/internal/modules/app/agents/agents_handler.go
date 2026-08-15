@@ -23,6 +23,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/app/runtimeauth"
 	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
+	workflowfile "github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
 	filemodel "github.com/zgiai/zgi/api/internal/modules/file_process/model"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
@@ -1606,9 +1607,9 @@ func (h *AgentsHandler) tryRouteToCodex(
 		}
 	}
 	// Attachments from the chat request become a context block the agent CLI
-	// can fetch/read.
+	// can fetch/read (including their extracted text, not just name+URL).
 	if len(req.FileIDs) > 0 && h.fileService != nil {
-		if attachments := h.buildAttachmentsContext(ctx, req.FileIDs); attachments != "" {
+		if attachments := h.buildAttachmentsContext(ctx, req.FileIDs, organizationID, agent.TenantID); attachments != "" {
 			if chatReq.SystemPrompt != "" {
 				chatReq.SystemPrompt += "\n\n"
 			}
@@ -1671,9 +1672,16 @@ func (h *AgentsHandler) tryRouteToCodex(
 	return true, nil
 }
 
+// attachmentContentRuneLimit caps how much extracted text per attachment is
+// injected into the agent's context so the system prompt stays bounded.
+const attachmentContentRuneLimit = 8000
+
 // buildAttachmentsContext lists the chat request's file attachments as a
-// context block the real Agent CLI can fetch/read.
-func (h *AgentsHandler) buildAttachmentsContext(ctx context.Context, fileIDs []string) string {
+// context block the real Agent CLI can fetch/read. Besides name+URL it also
+// extracts the file text (via the global content extractor the business
+// runtime uses) so the agent can answer from the content directly instead of
+// relying on a fetch step.
+func (h *AgentsHandler) buildAttachmentsContext(ctx context.Context, fileIDs []string, organizationID, workspaceID uuid.UUID) string {
 	if h.fileService == nil {
 		return ""
 	}
@@ -1695,7 +1703,34 @@ func (h *AgentsHandler) buildAttachmentsContext(ctx context.Context, fileIDs []s
 		}
 		b.WriteString("\n")
 	}
+	if extractor := workflowfile.GetGlobalContentExtractor(); extractor != nil {
+		contents, err := extractor.ExtractMultipleFiles(ctx, fileIDs, workflowfile.ContentExtractionScope{
+			OrganizationID: organizationID.String(),
+			WorkspaceID:    workspaceID.String(),
+		})
+		if err == nil {
+			for _, content := range contents {
+				if content == nil || content.Error != nil || content.Content == "" {
+					continue
+				}
+				b.WriteString("\n### ")
+				b.WriteString(content.FileID)
+				b.WriteString("\n\n")
+				b.WriteString(truncateAgentContentRunes(content.Content, attachmentContentRuneLimit))
+				b.WriteString("\n")
+			}
+		}
+	}
 	return b.String()
+}
+
+// truncateAgentContentRunes truncates extracted content to a rune budget.
+func truncateAgentContentRunes(s string, limit int) string {
+	runes := []rune(s)
+	if len(runes) <= limit {
+		return s
+	}
+	return string(runes[:limit]) + "\n…[truncated]"
 }
 
 // buildConversationHistory formats the most recent messages of a conversation

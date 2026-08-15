@@ -28,7 +28,11 @@ export async function runCodex(req: RunRequest, deps: AdapterDeps): Promise<Adap
   const { emit, emitSession, abortController } = deps;
 
   const config: { [key: string]: ConfigValue } = {};
-  if (req.systemPrompt) config.instructions = [req.systemPrompt];
+  // Codex 0.147's `instructions` config is a plain string (a sequence is
+  // rejected with "invalid type: sequence, expected a string"). The SDK
+  // serializes a string value as `instructions="…"`, which the CLI parses fine
+  // even for multi-line prompts.
+  if (req.systemPrompt) config.instructions = req.systemPrompt;
 
   const mcpServers = buildMcpServersConfig(req.mcpServers);
   if (Object.keys(mcpServers).length) config.mcp_servers = mcpServers;
