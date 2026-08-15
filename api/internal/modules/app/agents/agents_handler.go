@@ -47,6 +47,7 @@ type AgentsHandler struct {
 	modelPrechecker            llmclient.AppModelPrechecker
 	workflowContinuationRunner workflowContinuationRunner
 	runtimeRouter              *agentruntime.Router
+	memoryService              runtimeservice.UserMemoryService
 }
 
 type workflowContinuationRunner interface {
@@ -83,6 +84,12 @@ func (h *AgentsHandler) SetRuntimeRouter(r *agentruntime.Router) {
 
 func (h *AgentsHandler) SetFileService(fileService interfaces.FileService) {
 	h.fileService = fileService
+}
+
+// SetMemoryService injects the user memory renderer so codex/claude runs can
+// auto-inject remembered context, mirroring the business runtime.
+func (h *AgentsHandler) SetMemoryService(ms runtimeservice.UserMemoryService) {
+	h.memoryService = ms
 }
 
 func (h *AgentsHandler) SetModelPrechecker(modelPrechecker llmclient.AppModelPrechecker) {
@@ -1616,6 +1623,18 @@ func (h *AgentsHandler) tryRouteToCodex(
 			chatReq.SystemPrompt += "## Attachments\n\n" + attachments
 		}
 	}
+	// Auto-inject the user's remembered context when the chat asks for it,
+	// mirroring the business runtime's appendUserMemoryContext.
+	if req.UseMemory && h.memoryService != nil {
+		if enabled, err := h.memoryService.IsEnabled(ctx, userID); err == nil && enabled {
+			if rendered, err := h.memoryService.RenderContext(ctx, userID, codexUserMemoryBudgetChars); err == nil && strings.TrimSpace(rendered) != "" {
+				if chatReq.SystemPrompt != "" {
+					chatReq.SystemPrompt += "\n\n"
+				}
+				chatReq.SystemPrompt += rendered
+			}
+		}
+	}
 	// One message id anchors every event of this turn (message / skill_call_*)
 	// so the console timeline renders them as a single message. Resolve the
 	// conversation id once too: ConversationIDOrDefault generates a fresh uuid
@@ -1675,6 +1694,9 @@ func (h *AgentsHandler) tryRouteToCodex(
 // attachmentContentRuneLimit caps how much extracted text per attachment is
 // injected into the agent's context so the system prompt stays bounded.
 const attachmentContentRuneLimit = 8000
+
+// codexUserMemoryBudgetChars caps the injected user-memory context.
+const codexUserMemoryBudgetChars = 6000
 
 // buildAttachmentsContext lists the chat request's file attachments as a
 // context block the real Agent CLI can fetch/read. Besides name+URL it also
