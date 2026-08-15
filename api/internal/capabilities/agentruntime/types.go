@@ -113,6 +113,17 @@ type Driver interface {
 	SaveSession(ctx context.Context, state *SessionState) error
 }
 
+// SelfPersistingDriver marks drivers that create and persist their own
+// conversation/message records (e.g. the business runtime, which writes via
+// the chatruntime service). The chatstream persistence interceptor skips
+// message creation/update for such drivers and only orchestrates the SSE
+// envelope. Drivers that do not implement it (e.g. the real Agent CLI driver)
+// are fully managed: the interceptor creates the conversation + message,
+// updates the answer/status, and owns the SSE message lifecycle.
+type SelfPersistingDriver interface {
+	SelfPersistsMessages() bool
+}
+
 // GatewayKeyResolver resolves the ZGI LLM gateway API key used to authenticate
 // an organization's agent runtime calls (codex/claude routed through the LLM
 // gateway). Returns the decrypted raw key (sk-...).

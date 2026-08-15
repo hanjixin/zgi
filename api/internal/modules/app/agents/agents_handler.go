@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
 	agentruntime "github.com/zgiai/zgi/api/internal/capabilities/agentruntime"
+	"github.com/zgiai/zgi/api/internal/capabilities/agentruntime/chatstream"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimerepo "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
@@ -1663,60 +1664,53 @@ func (h *AgentsHandler) tryRouteToCodex(
 			chatReq.SystemPrompt += "## Retrieved knowledge\n\n" + retrieved.Context
 		}
 	}
-	// One message id anchors every event of this turn (message / skill_call_*)
-	// so the console timeline renders them as a single message. Resolve the
-	// conversation id once too: ConversationIDOrDefault generates a fresh uuid
-	// whenever ConversationID is nil, so without pinning it here every event
-	// would carry a different conversation_id and the frontend could not attach
-	// message_end to the message that message_start created.
-	messageID := uuid.New()
-	chatReq.MessageID = messageID
-	conversationID := chatReq.ConversationIDOrDefault()
-	chatReq.ConversationID = &conversationID
+	// The chatstream interceptor owns conversation/message persistence and the
+	// SSE message envelope (message_start / message / message_end). Live SSE
+	// streaming stays intact; the console timeline additionally gets a durable
+	// history in chat_runtime_conversations / chat_runtime_messages.
 	setupAgentSSE(c)
-	startEvt := agentruntime.StreamEvent{
-		ID:        uuid.New(),
-		EventType: "message_start",
-		Payload:   mustMarshalJSON(map[string]interface{}{
-			"conversation_id": conversationID.String(),
-			"message_id":      messageID.String(),
-			"model":           chatReq.ModelName,
-			"created_at":      timeNow().Unix(),
-		}),
-		CreatedAt: timeNow(),
+	_, err = h.chatStreamInterceptor().Run(ctx, driver, chatstream.RunContext{
+		OrganizationID: organizationID,
+		WorkspaceID:    &agent.TenantID,
+		AccountID:      accountID,
+		AgentID:        agent.ID,
+		CallerType:     runtimemodel.ConversationCallerAgent,
+		CallerID:       &agent.ID,
+		Source:         runtimemodel.ConversationSourceConsole,
+		ModelName:      modelName,
+		ModelProvider:  req.Provider,
+		Query:          req.Query,
+	}, chatReq, agentSSEStreamWriter(c))
+	if errors.Is(err, chatstream.ErrPreDispatch) {
+		// Nothing was streamed yet — let the caller fall back to the business
+		// runtime.
+		return false, err
 	}
-	_ = writeAgentSSEEvent(c, startEvt.ID.String(), startEvt.EventType, startEvt.Payload)
-
-	result, err := driver.ChatStream(ctx, chatReq,
-		func(chunk string) error {
-			return writeAgentSSE(c, "message", gin.H{
-				"conversation_id": conversationID.String(),
-				"message_id":      messageID.String(),
-				"answer":           chunk,
-			})
-		},
-		func(evt agentruntime.StreamEvent) error {
-			return writeAgentSSEEvent(c, evt.ID.String(), evt.EventType, evt.Payload)
-		},
-	)
 	if err != nil {
-		writeAgentSSE(c, "message_end", gin.H{
-			"conversation_id": conversationID.String(),
-			"message_id":      messageID.String(),
-			"status":          "error",
-			"metadata":        gin.H{"error": err.Error()},
-		})
-		return true, err
-	}
-	if result != nil {
-		writeAgentSSE(c, "message_end", gin.H{
-			"conversation_id": conversationID.String(),
-			"message_id":      messageID.String(),
-			"status":          result.Status,
-			"metadata":        gin.H{"stream_event_count": result.StreamEventCount},
-		})
+		// The turn was dispatched and message_end(status=error) was already
+		// streamed; the response is owned by the codex/claude path.
+		logger.WarnContext(ctx, "codex/claude turn completed with error (already streamed)", "agent_id", agentID, "error", err)
 	}
 	return true, nil
+}
+
+// chatStreamInterceptor returns the unified persistence/SSE interceptor.
+func (h *AgentsHandler) chatStreamInterceptor() *chatstream.Interceptor {
+	return chatstream.NewInterceptor(runtimerepo.NewRepositories(h.db))
+}
+
+// agentSSEStreamWriter adapts the handler's SSE writer to the chatstream
+// StreamWriter interface.
+func agentSSEStreamWriter(c *gin.Context) chatstream.StreamWriter {
+	return sseStreamWriterFunc(func(id, event string, data interface{}) error {
+		return writeAgentSSEEvent(c, id, event, data)
+	})
+}
+
+type sseStreamWriterFunc func(id, event string, data interface{}) error
+
+func (f sseStreamWriterFunc) WriteEvent(id, event string, data interface{}) error {
+	return f(id, event, data)
 }
 
 // attachmentContentRuneLimit caps how much extracted text per attachment is
