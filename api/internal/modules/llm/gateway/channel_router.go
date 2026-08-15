@@ -282,10 +282,15 @@ func filterRoutesForNativeProtocol(routes []*channelmodel.LLMRoute, llmModel *ll
 	switch modelCategory {
 	case modelCategoryResponses:
 		return filterRoutesByCapability(routes, func(route *channelmodel.LLMRoute) bool {
-			if llmModel != nil && !llmModel.Responses {
+			if routeSupportsOpenAIResponses(route) {
+				return true
+			}
+			// Chat-only providers (e.g. DeepSeek) can serve the Responses API
+			// through the Responses→Chat proxy, so keep them as candidates.
+			if llmModel != nil && !llmModel.ChatCompletions {
 				return false
 			}
-			return routeSupportsOpenAIResponses(route)
+			return routeSupportsChatCompletion(route)
 		})
 	case modelCategoryAnthropicMessages:
 		return filterRoutesByCapability(routes, func(route *channelmodel.LLMRoute) bool {
@@ -316,6 +321,19 @@ func filterRoutesByCapability(routes []*channelmodel.LLMRoute, supports func(*ch
 		}
 	}
 	return filtered
+}
+
+// routeSupportsChatCompletion reports whether a route's provider can serve
+// plain Chat Completions (the baseline adapter capability). Chat-only routes
+// are used as Responses candidates through the Responses→Chat proxy.
+func routeSupportsChatCompletion(route *channelmodel.LLMRoute) bool {
+	if route == nil {
+		return false
+	}
+	if _, err := channelprovider.Resolve(route.ChannelProvider); err != nil {
+		return false
+	}
+	return true
 }
 
 func routeSupportsOpenAIResponses(route *channelmodel.LLMRoute) bool {

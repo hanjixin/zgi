@@ -121,12 +121,38 @@ func (s *llmGatewayServiceImpl) createNativeResponse(
 	req *adapter.RawResponseRequest,
 ) (*adapter.RawResponse, error) {
 	return s.runNativeNonStream(ctx, apiKey, req.Model, req.Body, "llm.responses", nativeUsageBodyFormatResponses, func(callCtx context.Context, providerAdapter adapter.LLMProviderAdapter) (*adapter.RawResponse, error) {
-		rawCapable, ok := providerAdapter.(adapter.RawResponseCapable)
-		if !ok {
-			return nil, fmt.Errorf("%w: selected provider does not support OpenAI Responses", adapter.ErrCapabilityUnsupported)
+		if rawCapable, ok := providerAdapter.(adapter.RawResponseCapable); ok {
+			resp, err := rawCapable.CreateResponseRaw(callCtx, req)
+			if err == nil {
+				return resp, nil
+			}
+			if !adapter.IsCapabilityUnsupported(err) {
+				return nil, err
+			}
 		}
-		return rawCapable.CreateResponseRaw(callCtx, req)
+		// Chat-only provider: translate Responses → Chat Completions.
+		return s.responsesViaChat(callCtx, providerAdapter, req)
 	})
+}
+
+// responsesViaChat serves a Responses request through a chat-only provider by
+// translating the request to Chat Completions and the response back.
+func (s *llmGatewayServiceImpl) responsesViaChat(ctx context.Context, providerAdapter adapter.LLMProviderAdapter, req *adapter.RawResponseRequest) (*adapter.RawResponse, error) {
+	var responsesReq adapter.CreateResponseRequest
+	if err := json.Unmarshal(req.Body, &responsesReq); err != nil {
+		return nil, fmt.Errorf("parse responses request: %w", err)
+	}
+	chatReq := responsesToChatRequest(&responsesReq)
+	chatReq.Stream = false
+	resp, err := providerAdapter.ChatCompletion(ctx, chatReq)
+	if err != nil {
+		return nil, err
+	}
+	body, err := json.Marshal(chatToResponsesResponse(resp))
+	if err != nil {
+		return nil, err
+	}
+	return &adapter.RawResponse{Body: body, Usage: resp.Usage}, nil
 }
 
 func (s *llmGatewayServiceImpl) createNativeAnthropicMessage(
@@ -266,11 +292,28 @@ func (s *llmGatewayServiceImpl) createNativeResponseStream(
 	req *adapter.RawResponseRequest,
 ) (<-chan adapter.RawStreamEvent, error) {
 	return s.runNativeStream(ctx, apiKey, req.Model, req.Body, "llm.responses.stream", nativeUsageBodyFormatResponses, func(callCtx context.Context, providerAdapter adapter.LLMProviderAdapter) (<-chan adapter.RawStreamEvent, error) {
-		rawCapable, ok := providerAdapter.(adapter.RawResponseCapable)
-		if !ok {
-			return nil, fmt.Errorf("%w: selected provider does not support OpenAI Responses", adapter.ErrCapabilityUnsupported)
+		if rawCapable, ok := providerAdapter.(adapter.RawResponseCapable); ok {
+			ch, err := rawCapable.CreateResponseStream(callCtx, req)
+			if err == nil {
+				return ch, nil
+			}
+			if !adapter.IsCapabilityUnsupported(err) {
+				return nil, err
+			}
 		}
-		return rawCapable.CreateResponseStream(callCtx, req)
+		// Chat-only provider: translate Responses → Chat stream and map the
+		// chat chunks onto the Responses SSE event sequence.
+		var responsesReq adapter.CreateResponseRequest
+		if err := json.Unmarshal(req.Body, &responsesReq); err != nil {
+			return nil, fmt.Errorf("parse responses request: %w", err)
+		}
+		chatReq := responsesToChatRequest(&responsesReq)
+		chatReq.Stream = true
+		chatCh, err := providerAdapter.ChatCompletionStream(ctx, chatReq)
+		if err != nil {
+			return nil, err
+		}
+		return chatStreamToResponsesStream(chatCh, chatReq.Model), nil
 	})
 }
 
