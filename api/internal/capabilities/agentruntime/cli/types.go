@@ -70,16 +70,33 @@ type RunnerEvent struct {
 	Cost           float64         `json:"cost,omitempty"`
 }
 
-// ToolCallStartPayload mirrors the skill_call_start SSE payload.
+// ToolCallStartPayload is the skill_call_start SSE payload. It carries the
+// same fields as the console's AIChatSkillCallStartEventData so the frontend
+// renders agent CLI tool calls on the timeline without changes (the frontend
+// drops skill_call_start events missing conversation_id/message_id/skill_id).
 type ToolCallStartPayload struct {
-	ToolName  string          `json:"tool_name"`
-	Arguments json.RawMessage `json:"arguments,omitempty"`
+	ConversationID   string          `json:"conversation_id"`
+	MessageID        string          `json:"message_id"`
+	SkillID          string          `json:"skill_id"`
+	ToolName         string          `json:"tool_name"`
+	Arguments        json.RawMessage `json:"arguments,omitempty"`
+	ArgumentsSummary json.RawMessage `json:"arguments_summary,omitempty"`
+	Status           string          `json:"status"`
+	CreatedAt        int64           `json:"created_at,omitempty"`
 }
 
-// ToolCallEndPayload mirrors the skill_call_end SSE payload.
+// ToolCallEndPayload is the skill_call_end SSE payload (same contract as
+// AIChatSkillCallEndEventData).
 type ToolCallEndPayload struct {
-	ToolName string          `json:"tool_name"`
-	Result   json.RawMessage `json:"result,omitempty"`
+	ConversationID string          `json:"conversation_id"`
+	MessageID      string          `json:"message_id"`
+	SkillID        string          `json:"skill_id"`
+	ToolName       string          `json:"tool_name"`
+	Status         string          `json:"status"`
+	DurationMS     int64           `json:"duration_ms,omitempty"`
+	Message        string          `json:"message,omitempty"`
+	Result         json.RawMessage `json:"result,omitempty"`
+	CreatedAt      int64           `json:"created_at,omitempty"`
 }
 
 // ApprovalRequiredPayload mirrors the approval_required SSE payload.

@@ -98,6 +98,13 @@ func (d *CliDriver) ChatStream(ctx context.Context, req agentruntime.ChatRequest
 	}
 	start := time.Now()
 	sessionID := req.ConversationIDOrDefault()
+	// Anchor all stream events of this turn to one message so the console
+	// timeline can associate skill_call_* events with the streaming message.
+	messageID := req.MessageID
+	if messageID == uuid.Nil {
+		messageID = uuid.New()
+	}
+	toolStartedAt := map[string]time.Time{} // runner tool call id -> start time
 	cwd, err := d.ensureWorkspaceDir(ctx, req)
 	if err != nil {
 		return nil, err
@@ -158,11 +165,31 @@ func (d *CliDriver) ChatStream(ctx context.Context, req agentruntime.ChatRequest
 				}
 			}
 		case "tool_use":
+			if evt.ID != "" {
+				toolStartedAt[evt.ID] = time.Now()
+			}
 			d.emitEvent(onEvent, EventSkillCallStart, ToolCallStartPayload{
-				ToolName:  evt.Tool,
-				Arguments: evt.Input,
+				ConversationID:   sessionID.String(),
+				MessageID:        messageID.String(),
+				SkillID:          evt.Tool,
+				ToolName:         evt.Tool,
+				Arguments:        evt.Input,
+				ArgumentsSummary: evt.Input,
+				Status:           "running",
+				CreatedAt:        time.Now().Unix(),
 			})
 		case "tool_result":
+			status := "success"
+			if evt.IsError {
+				status = "error"
+			}
+			var durationMS int64
+			if evt.ID != "" {
+				if started, ok := toolStartedAt[evt.ID]; ok {
+					durationMS = time.Since(started).Milliseconds()
+					delete(toolStartedAt, evt.ID)
+				}
+			}
 			resultPayload := map[string]interface{}{
 				"ok":        !evt.IsError,
 				"tool":      evt.Tool,
@@ -171,8 +198,14 @@ func (d *CliDriver) ChatStream(ctx context.Context, req agentruntime.ChatRequest
 			}
 			resultJSON, _ := json.Marshal(resultPayload)
 			d.emitEvent(onEvent, EventSkillCallEnd, ToolCallEndPayload{
-				ToolName: evt.Tool,
-				Result:   resultJSON,
+				ConversationID: sessionID.String(),
+				MessageID:      messageID.String(),
+				SkillID:        evt.Tool,
+				ToolName:       evt.Tool,
+				Status:         status,
+				DurationMS:     durationMS,
+				Result:         resultJSON,
+				CreatedAt:      time.Now().Unix(),
 			})
 		case "command_exec":
 			d.emitEvent(onEvent, EventCommandLogged, CommandLoggedPayload{

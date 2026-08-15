@@ -110,6 +110,103 @@ func TestCliDriverChatStreamMapsEvents(t *testing.T) {
 	}
 }
 
+// TestCliDriverSkillCallPayloadsMatchFrontendContract locks the skill_call_*
+// payload shape the console frontend requires (AIChatSkillCallStartEventData /
+// AIChatSkillCallEndEventData). The frontend silently drops events missing
+// conversation_id / message_id / skill_id, so the agent kernel must emit them.
+func TestCliDriverSkillCallPayloadsMatchFrontendContract(t *testing.T) {
+	runner := &fakeRunner{events: []string{
+		dataLine(map[string]interface{}{"type": "session_started", "session_id": "s-1", "agent_session_id": "sess"}),
+		dataLine(map[string]interface{}{"type": "tool_use", "id": "call-1", "tool": "Bash", "input": map[string]interface{}{"command": "ls"}}),
+		dataLine(map[string]interface{}{"type": "tool_result", "id": "call-1", "tool": "Bash", "output": "a.go", "is_error": false}),
+		dataLine(map[string]interface{}{"type": "tool_use", "id": "call-2", "tool": "Bash", "input": map[string]interface{}{"command": "rm -rf x"}}),
+		dataLine(map[string]interface{}{"type": "tool_result", "id": "call-2", "tool": "Bash", "output": "failed", "is_error": true}),
+		dataLine(map[string]interface{}{"type": "done", "subtype": "success"}),
+	}}
+	srv := httptest.NewServer(runner.handler())
+	defer srv.Close()
+
+	driver := NewDriver(Options{
+		AgentType:      AgentTypeClaude,
+		Enabled:        true,
+		RunnerURL:      srv.URL,
+		PermissionMode: "default",
+		Governance:     agentruntime.NewGovernanceApprovalService(),
+	})
+
+	conversationID := uuid.New()
+	messageID := uuid.New()
+	var events []agentruntime.StreamEvent
+	_, err := driver.ChatStream(context.Background(), agentruntime.ChatRequest{
+		AgentID:        uuid.New(),
+		ConversationID: &conversationID,
+		MessageID:      messageID,
+		UserID:         uuid.New(),
+		TenantID:       uuid.New(),
+		UserMessage:    "go",
+	}, nil, func(evt agentruntime.StreamEvent) error {
+		events = append(events, evt)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("ChatStream: %v", err)
+	}
+
+	var starts []ToolCallStartPayload
+	var ends []ToolCallEndPayload
+	var startPayloads, endPayloads []map[string]interface{}
+	for _, evt := range events {
+		switch evt.EventType {
+		case EventSkillCallStart:
+			var p ToolCallStartPayload
+			if err := json.Unmarshal(evt.Payload, &p); err != nil {
+				t.Fatalf("start payload: %v", err)
+			}
+			starts = append(starts, p)
+			var raw map[string]interface{}
+			_ = json.Unmarshal(evt.Payload, &raw)
+			startPayloads = append(startPayloads, raw)
+		case EventSkillCallEnd:
+			var p ToolCallEndPayload
+			if err := json.Unmarshal(evt.Payload, &p); err != nil {
+				t.Fatalf("end payload: %v", err)
+			}
+			ends = append(ends, p)
+			var raw map[string]interface{}
+			_ = json.Unmarshal(evt.Payload, &raw)
+			endPayloads = append(endPayloads, raw)
+		}
+	}
+	if len(starts) != 2 || len(ends) != 2 {
+		t.Fatalf("starts=%d ends=%d, want 2/2", len(starts), len(ends))
+	}
+
+	// Every event must carry the identity the frontend keys the timeline on.
+	for i, p := range starts {
+		if p.ConversationID != conversationID.String() {
+			t.Fatalf("start[%d] conversation_id = %q", i, p.ConversationID)
+		}
+		if p.MessageID != messageID.String() {
+			t.Fatalf("start[%d] message_id = %q, want %q", i, p.MessageID, messageID)
+		}
+		if p.SkillID == "" || p.ToolName == "" {
+			t.Fatalf("start[%d] missing skill_id/tool_name: %#v", i, p)
+		}
+		if p.Status != "running" {
+			t.Fatalf("start[%d] status = %q, want running", i, p.Status)
+		}
+	}
+	if ends[0].Status != "success" {
+		t.Fatalf("end[0] status = %q, want success", ends[0].Status)
+	}
+	if ends[1].Status != "error" {
+		t.Fatalf("end[1] status = %q, want error", ends[1].Status)
+	}
+	if ends[0].DurationMS < 0 || ends[0].ConversationID != conversationID.String() || ends[0].MessageID != messageID.String() {
+		t.Fatalf("end[0] identity/duration malformed: %#v", ends[0])
+	}
+}
+
 func TestCliDriverPassesModelSystemPromptAndMcpServers(t *testing.T) {
 	runner := &fakeRunner{events: []string{
 		dataLine(map[string]interface{}{"type": "session_started", "agent_session_id": "s"}),

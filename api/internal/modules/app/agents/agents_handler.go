@@ -1588,11 +1588,20 @@ func (h *AgentsHandler) tryRouteToCodex(
 			chatReq.ConversationID = &parsed
 		}
 	}
+	// One message id anchors every event of this turn (message / skill_call_*)
+	// so the console timeline renders them as a single message.
+	messageID := uuid.New()
+	chatReq.MessageID = messageID
 	setupAgentSSE(c)
 	startEvt := agentruntime.StreamEvent{
 		ID:        uuid.New(),
 		EventType: "message_start",
-		Payload:   mustMarshalJSON(map[string]interface{}{"conversation_id": chatReq.ConversationIDOrDefault(), "message_id": uuid.New()}),
+		Payload:   mustMarshalJSON(map[string]interface{}{
+			"conversation_id": chatReq.ConversationIDOrDefault(),
+			"message_id":      messageID.String(),
+			"model":           chatReq.ModelName,
+			"created_at":      timeNow().Unix(),
+		}),
 		CreatedAt: timeNow(),
 	}
 	_ = writeAgentSSEEvent(c, startEvt.ID.String(), startEvt.EventType, startEvt.Payload)
@@ -1601,6 +1610,7 @@ func (h *AgentsHandler) tryRouteToCodex(
 		func(chunk string) error {
 			return writeAgentSSE(c, "message", gin.H{
 				"conversation_id": chatReq.ConversationIDOrDefault(),
+				"message_id":      messageID.String(),
 				"answer":           chunk,
 			})
 		},

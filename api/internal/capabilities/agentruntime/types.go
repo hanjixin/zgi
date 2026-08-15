@@ -48,6 +48,9 @@ var (
 type ChatRequest struct {
 	AgentID         uuid.UUID       `json:"agent_id"`
 	ConversationID  *uuid.UUID      `json:"conversation_id,omitempty"`
+	// MessageID anchors every stream event of this turn to one message so the
+	// console timeline can associate skill_call_* / message events with it.
+	MessageID       uuid.UUID       `json:"message_id,omitempty"`
 	UserID          uuid.UUID       `json:"user_id"`
 	TenantID        uuid.UUID       `json:"tenant_id"`
 	WorkspaceID     *uuid.UUID      `json:"workspace_id,omitempty"`
