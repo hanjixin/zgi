@@ -25,6 +25,7 @@ import (
 	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
 	workflowfile "github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
 	filemodel "github.com/zgiai/zgi/api/internal/modules/file_process/model"
+	datasetservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
@@ -48,6 +49,7 @@ type AgentsHandler struct {
 	workflowContinuationRunner workflowContinuationRunner
 	runtimeRouter              *agentruntime.Router
 	memoryService              runtimeservice.UserMemoryService
+	knowledgeRetrievalService  *datasetservice.KnowledgeRetrievalService
 }
 
 type workflowContinuationRunner interface {
@@ -90,6 +92,13 @@ func (h *AgentsHandler) SetFileService(fileService interfaces.FileService) {
 // auto-inject remembered context, mirroring the business runtime.
 func (h *AgentsHandler) SetMemoryService(ms runtimeservice.UserMemoryService) {
 	h.memoryService = ms
+}
+
+// SetKnowledgeRetrievalService injects the knowledge retrieval service so
+// codex/claude runs can auto-inject retrieved knowledge, mirroring the business
+// runtime's RAG behaviour.
+func (h *AgentsHandler) SetKnowledgeRetrievalService(s *datasetservice.KnowledgeRetrievalService) {
+	h.knowledgeRetrievalService = s
 }
 
 func (h *AgentsHandler) SetModelPrechecker(modelPrechecker llmclient.AppModelPrechecker) {
@@ -1633,6 +1642,25 @@ func (h *AgentsHandler) tryRouteToCodex(
 				}
 				chatReq.SystemPrompt += rendered
 			}
+		}
+	}
+	// Auto-inject retrieved knowledge from the agent's bound knowledge bases,
+	// mirroring the business runtime's RAG behaviour.
+	if h.knowledgeRetrievalService != nil {
+		retrieved, err := h.knowledgeRetrievalService.RetrieveAgentKnowledge(ctx, datasetservice.KnowledgeRetrieveRequest{
+			Scope: datasetservice.KnowledgeScope{
+				WorkspaceID:    agent.TenantID.String(),
+				OrganizationID: organizationID.String(),
+				AccountID:      accountID.String(),
+				AppID:          agent.ID.String(),
+			},
+			Query: req.Query,
+		})
+		if err == nil && retrieved != nil && retrieved.ResultCount > 0 && strings.TrimSpace(retrieved.Context) != "" {
+			if chatReq.SystemPrompt != "" {
+				chatReq.SystemPrompt += "\n\n"
+			}
+			chatReq.SystemPrompt += "## Retrieved knowledge\n\n" + retrieved.Context
 		}
 	}
 	// One message id anchors every event of this turn (message / skill_call_*)

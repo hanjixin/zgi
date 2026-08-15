@@ -126,6 +126,7 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	appHandler.SetRuntimeRouter(codexRouter)
 	appHandler.SetFileService(fileService)
 	appHandler.SetMemoryService(memoryService)
+	appHandler.SetKnowledgeRetrievalService(knowledgeRetrievalService)
 	if modelPrechecker, ok := llmClient.(llmclient.AppModelPrechecker); ok {
 		appHandler.SetModelPrechecker(modelPrechecker)
 	}
