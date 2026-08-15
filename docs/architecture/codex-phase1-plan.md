@@ -326,3 +326,4 @@ event: message_end         # status=completed, stream_event_count=5
 - 邮件注册需要真实 `RESEND_API_KEY`；本地用 7.3 手插数据替代。
 - 审批仍为治理自动决策（`permission_request` 事件已透出，交互式审批 UI 待做）。
 - Codex 的 MCP 已通过 `--config` 点路径逐键注入接通（见 7.6-3）；`mcpbridge` 的 Streamable HTTP GET/SSE 会话握手已补齐（`server.go` 对 `Accept: text/event-stream` 返回 `text/event-stream` 流），Codex 客户端可完成握手。
+- **`allowed_tools` 治理仅对 Claude 生效，Codex 无工具级约束。** Claude 通过 SDK 的 `canUseTool` 回调应用 `allowed_tools`/`disallowed_tools`；Codex 0.147 的权限模型是 **命名权限档案**（`[permissions.<name>]`，仅控制 filesystem 路径与 network 域名），没有"禁用某个工具"的配置。把治理工具名映射到档案会**过度限制**（`web_fetch` 禁用 → 连 git/包下载一起禁）或**覆盖不全**（`shell_run` 在 `danger-full-access` 下无法限制）。真正可靠的工具级约束需把 Codex 跑进 **zgi-sandbox 容器**（OS 层限制文件/网络/进程），或等待 Codex 提供工具级权限；在此之前 `allowed_tools` 对 Codex 是**文档化限制**。
