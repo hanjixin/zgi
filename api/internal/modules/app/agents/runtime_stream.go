@@ -77,13 +77,17 @@ func (h *AgentsHandler) tryRegenerateToCodex(c *gin.Context, runtimeCtx agentRun
 	if req.Query != nil && strings.TrimSpace(*req.Query) != "" {
 		prompt = *req.Query
 	}
+	modelName := runtimeStringConfig(runtimeCfg, "model_name", "model", "model_id")
+	if req.Model != nil && strings.TrimSpace(*req.Model) != "" {
+		modelName = strings.TrimSpace(*req.Model)
+	}
 	chatReq := agentruntime.ChatRequest{
 		AgentID:         agent.ID,
 		UserID:          runtimeCtx.Scope.AccountID,
 		TenantID:        runtimeCtx.Scope.OrganizationID,
 		UserMessage:     prompt,
 		SystemPrompt:    runtimeStringConfig(runtimeCfg, "system_prompt", "systemPrompt"),
-		ModelName:       runtimeStringConfig(runtimeCfg, "model_name", "model", "model_id"),
+		ModelName:       modelName,
 		McpServers:      parseMcpServersFromConfig(runtimeCfg),
 		EnabledSkillIDs: parseEnabledSkillIDs(runtimeCfg),
 		ConversationID:  &original.ConversationID,

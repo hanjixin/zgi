@@ -1575,13 +1575,20 @@ func (h *AgentsHandler) tryRouteToCodex(
 	userID := accountID
 	tenantID := organizationID
 	runtimeCfg := descriptor.RuntimeConfig
+	// The console/runtime editor passes the selected model on the request
+	// (draft config); prefer it over the persisted runtime_config so the
+	// model the user actually picked flows through to the agent CLI.
+	modelName := runtimeStringConfig(runtimeCfg, "model_name", "model", "model_id")
+	if strings.TrimSpace(req.Model) != "" {
+		modelName = strings.TrimSpace(req.Model)
+	}
 	chatReq := agentruntime.ChatRequest{
 		AgentID:         agent.ID,
 		UserID:          userID,
 		TenantID:        tenantID,
 		UserMessage:     req.Query,
 		SystemPrompt:    runtimeStringConfig(runtimeCfg, "system_prompt", "systemPrompt"),
-		ModelName:       runtimeStringConfig(runtimeCfg, "model_name", "model", "model_id"),
+		ModelName:       modelName,
 		McpServers:      parseMcpServersFromConfig(runtimeCfg),
 		EnabledSkillIDs: parseEnabledSkillIDs(runtimeCfg),
 	}
