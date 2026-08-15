@@ -136,8 +136,8 @@ func (h *AgentsHandler) tryRegenerateToCodex(c *gin.Context, runtimeCtx agentRun
 	}
 	if result != nil {
 		writeAgentSSE(c, "message_end", gin.H{
-			"conversation_id": result.ConversationID,
-			"message_id":      result.MessageID,
+			"conversation_id": chatReq.ConversationIDOrDefault(),
+			"message_id":      messageIDNew.String(),
 			"status":          result.Status,
 			"metadata":        gin.H{"stream_event_count": result.StreamEventCount},
 		})

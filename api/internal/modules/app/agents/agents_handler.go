@@ -1616,15 +1616,21 @@ func (h *AgentsHandler) tryRouteToCodex(
 		}
 	}
 	// One message id anchors every event of this turn (message / skill_call_*)
-	// so the console timeline renders them as a single message.
+	// so the console timeline renders them as a single message. Resolve the
+	// conversation id once too: ConversationIDOrDefault generates a fresh uuid
+	// whenever ConversationID is nil, so without pinning it here every event
+	// would carry a different conversation_id and the frontend could not attach
+	// message_end to the message that message_start created.
 	messageID := uuid.New()
 	chatReq.MessageID = messageID
+	conversationID := chatReq.ConversationIDOrDefault()
+	chatReq.ConversationID = &conversationID
 	setupAgentSSE(c)
 	startEvt := agentruntime.StreamEvent{
 		ID:        uuid.New(),
 		EventType: "message_start",
 		Payload:   mustMarshalJSON(map[string]interface{}{
-			"conversation_id": chatReq.ConversationIDOrDefault(),
+			"conversation_id": conversationID.String(),
 			"message_id":      messageID.String(),
 			"model":           chatReq.ModelName,
 			"created_at":      timeNow().Unix(),
@@ -1636,7 +1642,7 @@ func (h *AgentsHandler) tryRouteToCodex(
 	result, err := driver.ChatStream(ctx, chatReq,
 		func(chunk string) error {
 			return writeAgentSSE(c, "message", gin.H{
-				"conversation_id": chatReq.ConversationIDOrDefault(),
+				"conversation_id": conversationID.String(),
 				"message_id":      messageID.String(),
 				"answer":           chunk,
 			})
@@ -1647,7 +1653,8 @@ func (h *AgentsHandler) tryRouteToCodex(
 	)
 	if err != nil {
 		writeAgentSSE(c, "message_end", gin.H{
-			"conversation_id": chatReq.ConversationIDOrDefault(),
+			"conversation_id": conversationID.String(),
+			"message_id":      messageID.String(),
 			"status":          "error",
 			"metadata":        gin.H{"error": err.Error()},
 		})
@@ -1655,8 +1662,8 @@ func (h *AgentsHandler) tryRouteToCodex(
 	}
 	if result != nil {
 		writeAgentSSE(c, "message_end", gin.H{
-			"conversation_id": result.ConversationID,
-			"message_id":      result.MessageID,
+			"conversation_id": conversationID.String(),
+			"message_id":      messageID.String(),
 			"status":          result.Status,
 			"metadata":        gin.H{"stream_event_count": result.StreamEventCount},
 		})
