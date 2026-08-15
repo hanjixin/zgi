@@ -36,6 +36,9 @@ type RunRequest struct {
 	Resume          string                     `json:"resume,omitempty"`
 	AskTimeoutMS    int                        `json:"ask_timeout_ms,omitempty"`
 	McpServers      []agentruntime.McpServerConfig `json:"mcp_servers,omitempty"`
+	// GatewayURL is the ZGI LLM gateway base URL. When set, the runner points
+	// codex/claude at the gateway instead of their external provider defaults.
+	GatewayURL string `json:"gateway_url,omitempty"`
 }
 
 // PermissionRequest is the body for POST /v1/agents/:sid/permission.

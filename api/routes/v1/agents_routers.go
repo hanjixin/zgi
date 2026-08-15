@@ -20,6 +20,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	datasetservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
 	datasourceservice "github.com/zgiai/zgi/api/internal/modules/datasource/service"
+	apikeyrepo "github.com/zgiai/zgi/api/internal/modules/llm/apikey/repository"
 	channelrepo "github.com/zgiai/zgi/api/internal/modules/llm/channel/repository"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
@@ -280,6 +281,13 @@ func initAgentRuntimeRouter(db *gorm.DB, chatRuntimeService runtimeservice.Servi
 		defaultMcpServers = []agentruntime.McpServerConfig{zgi}
 	}
 
+	// When the LLM gateway is configured, codex/claude authenticate against it
+	// with the organization's regular API key (usage meters through that key).
+	var gatewayResolver agentruntime.GatewayKeyResolver
+	if cfg.AgentRunner.LLMGatewayURL != "" {
+		gatewayResolver = &gatewayKeyResolver{repo: apikeyrepo.NewAPIKeyRepository(db)}
+	}
+
 	// Real OpenAI Codex via the agent-runner (runtime_type=codex).
 	// danger-full-access: Codex 0.125+ auto-cancels MCP tool calls (e.g. the
 	// zgi-tools bridge) under managed sandbox profiles (read-only /
@@ -287,37 +295,41 @@ func initAgentRuntimeRouter(db *gorm.DB, chatRuntimeService runtimeservice.Servi
 	// unsandboxed mode lets MCP tools actually execute. Verified against
 	// codex-cli 0.147.0.
 	codexDriver := cli.NewDriver(cli.Options{
-		AgentType:       cli.AgentTypeCodex,
-		Enabled:         cfg.Codex.Enabled,
-		RunnerURL:       cfg.AgentRunner.URL,
-		Model:           cfg.Codex.ModelName,
-		SandboxMode:     "danger-full-access",
-		ApprovalPolicy:  "never",
-		AllowedTools:    allowedTools,
-		DisallowedTools: disallowedTools,
-		APIKey:          cfg.AgentRunner.OpenAIAPIKey,
-		WorkspaceRoot:   cfg.AgentRunner.WorkspaceRoot,
-		AskTimeoutMS:    cfg.AgentRunner.AskTimeoutMS,
-		McpServers:      defaultMcpServers,
-		WorkspaceSvc:    wsService,
-		Governance:      governance,
+		AgentType:         cli.AgentTypeCodex,
+		Enabled:           cfg.Codex.Enabled,
+		RunnerURL:         cfg.AgentRunner.URL,
+		Model:             cfg.Codex.ModelName,
+		SandboxMode:       "danger-full-access",
+		ApprovalPolicy:    "never",
+		AllowedTools:      allowedTools,
+		DisallowedTools:   disallowedTools,
+		APIKey:            cfg.AgentRunner.OpenAIAPIKey,
+		WorkspaceRoot:     cfg.AgentRunner.WorkspaceRoot,
+		AskTimeoutMS:      cfg.AgentRunner.AskTimeoutMS,
+		McpServers:        defaultMcpServers,
+		LLMGatewayURL:     cfg.AgentRunner.LLMGatewayURL,
+		GatewayKeyResolver: gatewayResolver,
+		WorkspaceSvc:      wsService,
+		Governance:        governance,
 	})
 
 	// Real Claude Code via the agent-runner (runtime_type=claude-code).
 	claudeCodeDriver := cli.NewDriver(cli.Options{
-		AgentType:       cli.AgentTypeClaude,
-		Enabled:         cfg.AgentRunner.ClaudeCodeEnabled,
-		RunnerURL:       cfg.AgentRunner.URL,
-		Model:           cfg.AgentRunner.ClaudeModel,
-		PermissionMode:  cfg.AgentRunner.PermissionMode,
-		AllowedTools:    allowedTools,
-		DisallowedTools: disallowedTools,
-		APIKey:          cfg.AgentRunner.ClaudeAPIKey,
-		WorkspaceRoot:   cfg.AgentRunner.WorkspaceRoot,
-		AskTimeoutMS:    cfg.AgentRunner.AskTimeoutMS,
-		McpServers:      defaultMcpServers,
-		WorkspaceSvc:    wsService,
-		Governance:      governance,
+		AgentType:         cli.AgentTypeClaude,
+		Enabled:           cfg.AgentRunner.ClaudeCodeEnabled,
+		RunnerURL:         cfg.AgentRunner.URL,
+		Model:             cfg.AgentRunner.ClaudeModel,
+		PermissionMode:    cfg.AgentRunner.PermissionMode,
+		AllowedTools:      allowedTools,
+		DisallowedTools:   disallowedTools,
+		APIKey:            cfg.AgentRunner.ClaudeAPIKey,
+		WorkspaceRoot:     cfg.AgentRunner.WorkspaceRoot,
+		AskTimeoutMS:      cfg.AgentRunner.AskTimeoutMS,
+		McpServers:        defaultMcpServers,
+		LLMGatewayURL:     cfg.AgentRunner.LLMGatewayURL,
+		GatewayKeyResolver: gatewayResolver,
+		WorkspaceSvc:      wsService,
+		Governance:        governance,
 	})
 
 	return agentruntime.NewRouter(

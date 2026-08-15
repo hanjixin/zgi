@@ -131,6 +131,7 @@ func loadAgentRunnerConfig(cfg *Config, source *envSource) {
 		DisallowedTools:   source.csv(nil, envAgentRunnerDisallowedTools),
 		McpURL:            source.string("", envAgentRunnerMCPURL),
 		McpAPIKey:         source.string("", envAgentRunnerMCPAPIKey),
+		LLMGatewayURL:     source.string("", envAgentRunnerLLMGatewayURL),
 	}
 }
 

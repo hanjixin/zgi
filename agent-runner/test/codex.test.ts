@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { buildMcpServersConfig } from '../src/adapters/codex.js';
+import { buildGatewayProviderConfig, buildMcpServersConfig } from '../src/adapters/codex.js';
 
 // Regression: Codex's `--config` parser rejects an inline-table RHS
 // (`mcp_servers.X.http_headers={ Authorization = "…" }`) as a string and aborts
@@ -40,6 +40,18 @@ test('codex mcp config: http servers drop env (rejected on streamable_http)', ()
     { name: 'zgi-tools', type: 'http', url: 'http://zgi/mcp', env: { SECRET: 'x' } },
   ]);
   assert.deepEqual(out, { 'zgi-tools': { url: 'http://zgi/mcp' } });
+});
+
+test('codex gateway: model provider points at gateway /v1 responses', () => {
+  const cfg = buildGatewayProviderConfig('http://127.0.0.1:2670/');
+  assert.deepEqual(cfg, {
+    zgi: {
+      name: 'ZGI LLM Gateway',
+      base_url: 'http://127.0.0.1:2670/v1',
+      wire_api: 'responses',
+      env_key: 'OPENAI_API_KEY',
+    },
+  });
 });
 
 test('codex mcp config: servers without url/command are omitted', () => {

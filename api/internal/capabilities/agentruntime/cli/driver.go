@@ -39,6 +39,13 @@ type Options struct {
 	AskTimeoutMS    int
 	McpServers      []agentruntime.McpServerConfig // global MCP servers (per-agent ones come via ChatRequest)
 
+	// LLMGatewayURL, when set, routes codex/claude model calls through the ZGI
+	// LLM gateway (base URL, e.g. http://127.0.0.1:2670). The gateway key is
+	// resolved per-organization via GatewayKeyResolver; usage meters through
+	// that key's quota.
+	LLMGatewayURL         string
+	GatewayKeyResolver    agentruntime.GatewayKeyResolver
+
 	WorkspaceSvc workspace.Service
 	Governance   *agentruntime.GovernanceApprovalService
 }
@@ -113,13 +120,29 @@ func (d *CliDriver) ChatStream(ctx context.Context, req agentruntime.ChatRequest
 	// Resume a prior conversation when a runner session id was persisted.
 	resume, _ := d.loadAgentSession(ctx, req.AgentID, sessionID)
 
+	// When the LLM gateway is configured, resolve the organization's gateway
+	// API key so codex/claude authenticate against the gateway (usage meters
+	// through that key's quota) instead of their own external credentials.
+	gatewayKey := ""
+	if d.opts.LLMGatewayURL != "" {
+		if d.opts.GatewayKeyResolver == nil {
+			return nil, errors.New("llm gateway configured but gateway key resolver is missing")
+		}
+		var err error
+		gatewayKey, err = d.opts.GatewayKeyResolver.ResolveGatewayKey(ctx, req.TenantID)
+		if err != nil {
+			return nil, fmt.Errorf("resolve llm gateway key: %w", err)
+		}
+	}
+
 	runReq := RunRequest{
 		AgentType:       d.agentType,
 		SessionID:       sessionID.String(),
 		Prompt:          req.UserMessage,
 		Cwd:             cwd,
-		Env:             d.buildEnv(req),
+		Env:             d.buildEnv(req, gatewayKey),
 		Model:           d.resolveModel(req),
+		GatewayURL:      d.opts.LLMGatewayURL,
 		SystemPrompt:    req.SystemPrompt,
 		AllowedTools:    d.opts.AllowedTools,
 		DisallowedTools: d.opts.DisallowedTools,
@@ -362,8 +385,21 @@ func (d *CliDriver) resolveMcpServers(req agentruntime.ChatRequest) []agentrunti
 	return merged
 }
 
-func (d *CliDriver) buildEnv(req agentruntime.ChatRequest) map[string]string {
+func (d *CliDriver) buildEnv(req agentruntime.ChatRequest, gatewayKey string) map[string]string {
 	env := map[string]string{}
+	// Route codex/claude through the ZGI LLM gateway using the org's API key.
+	// Usage meters through that key's quota (gateway QuotaSubjectType=api_key).
+	if d.opts.LLMGatewayURL != "" && gatewayKey != "" {
+		env["ZGI_LLM_GATEWAY_URL"] = d.opts.LLMGatewayURL
+		switch d.agentType {
+		case AgentTypeClaude:
+			env["ANTHROPIC_BASE_URL"] = strings.TrimRight(d.opts.LLMGatewayURL, "/") + "/anthropic"
+			env["ANTHROPIC_API_KEY"] = gatewayKey
+		case AgentTypeCodex:
+			env["OPENAI_API_KEY"] = gatewayKey
+		}
+		return env
+	}
 	if d.agentType == AgentTypeClaude && d.opts.APIKey != "" {
 		env["ANTHROPIC_API_KEY"] = d.opts.APIKey
 	}

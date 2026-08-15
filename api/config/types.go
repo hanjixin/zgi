@@ -92,6 +92,10 @@ type AgentRunnerConfig struct {
 	DisallowedTools   []string `json:"disallowed_tools"`
 	McpURL            string   `json:"mcp_url"`
 	McpAPIKey         string   `json:"-"`
+	// LLMGatewayURL, when set, points codex/claude runtimes at the ZGI LLM
+	// gateway (e.g. http://127.0.0.1:2670). Each run authenticates with the
+	// organization's regular API key and usage is metered through it.
+	LLMGatewayURL string `json:"llm_gateway_url"`
 }
 
 type ServerConfig struct {

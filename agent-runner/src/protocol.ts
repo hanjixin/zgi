@@ -24,6 +24,8 @@ export interface RunRequest {
   askTimeoutMs: number;
   /** MCP servers exposed to the Agent CLI. */
   mcpServers?: McpServerConfig[];
+  /** ZGI LLM gateway base URL; when set, codex/claude route model calls through it. */
+  gatewayUrl?: string;
 }
 
 /** A remote/stdio MCP server the Agent CLI may connect to. */
@@ -91,6 +93,7 @@ export function parseRunRequest(body: unknown): RunRequest {
     resume: raw.resume ? String(raw.resume) : undefined,
     askTimeoutMs: Number(raw.ask_timeout_ms || 300_000),
     mcpServers: parseMcpServers(raw.mcp_servers),
+    gatewayUrl: raw.gateway_url ? String(raw.gateway_url) : undefined,
   };
 }
 

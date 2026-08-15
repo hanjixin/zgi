@@ -109,6 +109,13 @@ type Driver interface {
 	SaveSession(ctx context.Context, state *SessionState) error
 }
 
+// GatewayKeyResolver resolves the ZGI LLM gateway API key used to authenticate
+// an organization's agent runtime calls (codex/claude routed through the LLM
+// gateway). Returns the decrypted raw key (sk-...).
+type GatewayKeyResolver interface {
+	ResolveGatewayKey(ctx context.Context, organizationID uuid.UUID) (string, error)
+}
+
 func (r ChatRequest) ConversationIDOrDefault() uuid.UUID {
 	if r.ConversationID != nil {
 		return *r.ConversationID

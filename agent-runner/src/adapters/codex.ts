@@ -33,6 +33,13 @@ export async function runCodex(req: RunRequest, deps: AdapterDeps): Promise<Adap
   const mcpServers = buildMcpServersConfig(req.mcpServers);
   if (Object.keys(mcpServers).length) config.mcp_servers = mcpServers;
 
+  // Route model calls through the ZGI LLM gateway (OpenAI Responses API). The
+  // org API key rides the OPENAI_API_KEY env var injected by the Go driver.
+  if (req.gatewayUrl) {
+    config.model_providers = buildGatewayProviderConfig(req.gatewayUrl);
+    config.model_provider = 'zgi';
+  }
+
   const codex = new Codex({
     apiKey: req.env.OPENAI_API_KEY || req.env.CODEX_API_KEY || process.env.OPENAI_API_KEY,
     env: req.env,
@@ -137,6 +144,22 @@ export async function runCodex(req: RunRequest, deps: AdapterDeps): Promise<Adap
  *   streamable_http servers, so remote servers carry headers via
  *   `http_headers.<KEY>` and drop `env`.
  */
+/**
+ * Build the Codex model provider config that routes model calls through the
+ * ZGI LLM gateway (OpenAI Responses API at `<gateway>/v1`). The org API key is
+ * read from the OPENAI_API_KEY env var injected by the Go driver.
+ */
+export function buildGatewayProviderConfig(gatewayUrl: string): Record<string, Record<string, ConfigValue>> {
+  return {
+    zgi: {
+      name: 'ZGI LLM Gateway',
+      base_url: `${gatewayUrl.replace(/\/+$/, '')}/v1`,
+      wire_api: 'responses',
+      env_key: 'OPENAI_API_KEY',
+    },
+  };
+}
+
 export function buildMcpServersConfig(servers?: McpServerConfig[]): Record<string, Record<string, ConfigValue>> {
   const out: Record<string, Record<string, ConfigValue>> = {};
   for (const s of servers ?? []) {

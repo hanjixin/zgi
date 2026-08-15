@@ -207,6 +207,69 @@ func TestCliDriverSkillCallPayloadsMatchFrontendContract(t *testing.T) {
 	}
 }
 
+type stubGatewayKeyResolver struct{ key string }
+
+func (s *stubGatewayKeyResolver) ResolveGatewayKey(ctx context.Context, organizationID uuid.UUID) (string, error) {
+	return s.key, nil
+}
+
+// TestCliDriverRoutesModelCallsThroughGateway verifies that when the LLM
+// gateway is configured, the run request carries the gateway URL and the
+// org's API key (codex), so the runner points the CLI at the gateway.
+func TestCliDriverRoutesModelCallsThroughGateway(t *testing.T) {
+	runner := &fakeRunner{events: []string{
+		dataLine(map[string]interface{}{"type": "session_started", "agent_session_id": "s"}),
+		dataLine(map[string]interface{}{"type": "done", "subtype": "success"}),
+	}}
+	srv := httptest.NewServer(runner.handler())
+	defer srv.Close()
+
+	driver := NewDriver(Options{
+		AgentType:          AgentTypeCodex,
+		Enabled:            true,
+		RunnerURL:          srv.URL,
+		LLMGatewayURL:      "http://127.0.0.1:2670",
+		GatewayKeyResolver: &stubGatewayKeyResolver{key: "sk-test"},
+		Governance:         agentruntime.NewGovernanceApprovalService(),
+	})
+	_, err := driver.ChatStream(context.Background(), agentruntime.ChatRequest{
+		AgentID:     uuid.New(),
+		TenantID:    uuid.New(),
+		UserID:      uuid.New(),
+		UserMessage: "hi",
+	}, nil, nil)
+	if err != nil {
+		t.Fatalf("ChatStream: %v", err)
+	}
+	if runner.lastRun.GatewayURL != "http://127.0.0.1:2670" {
+		t.Fatalf("gateway_url = %q", runner.lastRun.GatewayURL)
+	}
+	if got := runner.lastRun.Env["OPENAI_API_KEY"]; got != "sk-test" {
+		t.Fatalf("OPENAI_API_KEY = %q", got)
+	}
+	if got := runner.lastRun.Env["ZGI_LLM_GATEWAY_URL"]; got != "http://127.0.0.1:2670" {
+		t.Fatalf("ZGI_LLM_GATEWAY_URL = %q", got)
+	}
+}
+
+// TestCliDriverGatewayEnvForClaude verifies claude gets the Anthropic-compatible
+// gateway base URL plus the org key.
+func TestCliDriverGatewayEnvForClaude(t *testing.T) {
+	driver := NewDriver(Options{
+		AgentType:          AgentTypeClaude,
+		Enabled:            true,
+		LLMGatewayURL:      "http://127.0.0.1:2670/",
+		GatewayKeyResolver: &stubGatewayKeyResolver{key: "sk-claude"},
+	})
+	env := driver.buildEnv(agentruntime.ChatRequest{}, "sk-claude")
+	if got := env["ANTHROPIC_BASE_URL"]; got != "http://127.0.0.1:2670/anthropic" {
+		t.Fatalf("ANTHROPIC_BASE_URL = %q", got)
+	}
+	if got := env["ANTHROPIC_API_KEY"]; got != "sk-claude" {
+		t.Fatalf("ANTHROPIC_API_KEY = %q", got)
+	}
+}
+
 func TestCliDriverPassesModelSystemPromptAndMcpServers(t *testing.T) {
 	runner := &fakeRunner{events: []string{
 		dataLine(map[string]interface{}{"type": "session_started", "agent_session_id": "s"}),
