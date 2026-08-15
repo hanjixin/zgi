@@ -157,9 +157,84 @@ func (a *DeepSeekAdapter) ChatCompletionStream(ctx context.Context, request *ada
 	return respChan, nil
 }
 
-// CreateResponse executes response creation request
+// CreateResponse executes a Responses request.
 func (a *DeepSeekAdapter) CreateResponse(ctx context.Context, request *adapter.CreateResponseRequest) (*adapter.CreateResponseResponse, error) {
-	return nil, fmt.Errorf("%w: DeepSeek /responses API is not documented", adapter.ErrCapabilityUnsupported)
+	body, err := json.Marshal(request)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := a.CreateResponseRaw(ctx, &adapter.RawResponseRequest{Model: request.Model, Body: body})
+	if err != nil {
+		return nil, err
+	}
+	var resp adapter.CreateResponseResponse
+	if err := json.Unmarshal(raw.Body, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse responses response: %w", err)
+	}
+	return &resp, nil
+}
+
+// CreateResponseRaw passes a raw Responses request through to DeepSeek.
+func (a *DeepSeekAdapter) CreateResponseRaw(ctx context.Context, request *adapter.RawResponseRequest) (*adapter.RawResponse, error) {
+	url := fmt.Sprintf("%s/responses", strings.TrimRight(a.baseURL, "/"))
+	headers := a.buildHeaders()
+	respBody, statusCode, err := a.httpClient.DoRequest(ctx, "POST", url, headers, request.Body)
+	if err != nil {
+		return nil, fmt.Errorf("responses request failed: %w", err)
+	}
+	if statusCode != 200 {
+		return nil, a.handleError(statusCode, respBody)
+	}
+	return &adapter.RawResponse{Body: respBody}, nil
+}
+
+// CreateResponseStream passes a raw Responses streaming request through to
+// DeepSeek, relaying the SSE events (response.created, output_text.delta, ...).
+func (a *DeepSeekAdapter) CreateResponseStream(ctx context.Context, request *adapter.RawResponseRequest) (<-chan adapter.RawStreamEvent, error) {
+	url := fmt.Sprintf("%s/responses", strings.TrimRight(a.baseURL, "/"))
+	headers := a.buildHeaders()
+	resp, err := a.httpClient.DoStreamRequest(ctx, "POST", url, headers, request.Body)
+	if err != nil {
+		return nil, fmt.Errorf("responses stream request failed: %w", err)
+	}
+
+	out := make(chan adapter.RawStreamEvent, 10)
+	dataChan := make(chan string, 10)
+	errChan := make(chan error, 1)
+	go adapter.ParseSSE(resp.Body, dataChan, errChan)
+
+	go func() {
+		defer close(out)
+		defer resp.Body.Close()
+		var lastUsage *adapter.Usage
+		for {
+			select {
+			case <-ctx.Done():
+				out <- adapter.RawStreamEvent{Error: ctx.Err(), Done: true, Usage: lastUsage}
+				return
+			case err := <-errChan:
+				if err != nil {
+					out <- adapter.RawStreamEvent{Error: err, Done: true, Usage: lastUsage}
+				}
+				return
+			case data, ok := <-dataChan:
+				if !ok {
+					out <- adapter.RawStreamEvent{Done: true, Usage: lastUsage}
+					return
+				}
+				raw := json.RawMessage(data)
+				eventType := strings.TrimSpace(rawEventType(raw))
+				if eventType == "" {
+					eventType = "message"
+				}
+				if usage := openAIUsageFromRaw(raw); usage != nil {
+					lastUsage = usage
+				}
+				out <- adapter.RawStreamEvent{Event: eventType, Data: raw, Usage: lastUsage}
+			}
+		}
+	}()
+	return out, nil
 }
 
 func (a *DeepSeekAdapter) CreateAnthropicMessage(ctx context.Context, request *adapter.AnthropicMessageRequest) (*adapter.RawResponse, error) {

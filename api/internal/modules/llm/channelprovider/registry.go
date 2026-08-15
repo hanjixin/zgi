@@ -44,7 +44,7 @@ var specs = map[string]Spec{
 	"bigmodel":          {Name: "glm", AdapterKey: "glm", LookupProvider: "zhipu", AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
 	"minimax":           {Name: "minimax", AdapterKey: "minimax", LookupProvider: "minimax", NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
 	"minmax":            {Name: "minimax", AdapterKey: "minimax", LookupProvider: "minimax", NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
-	"deepseek":          {Name: "deepseek", AdapterKey: "deepseek", LookupProvider: "deepseek", AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
+	"deepseek":          {Name: "deepseek", AdapterKey: "deepseek", LookupProvider: "deepseek", AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol(), AnthropicMessages: supportedNativeProtocol()}},
 	"siliconflow":       {Name: "siliconflow", AdapterKey: "siliconflow", LookupProvider: "siliconflow", AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
 	"mistral":           {Name: "mistral", AdapterKey: "mistral", LookupProvider: "mistral"},
 	"cohere":            {Name: "cohere", AdapterKey: "cohere", LookupProvider: "cohere"},
