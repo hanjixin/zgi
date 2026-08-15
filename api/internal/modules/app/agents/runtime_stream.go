@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/agentruntime"
+	"github.com/zgiai/zgi/api/internal/capabilities/agentruntime/chatstream"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimerepo "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
@@ -98,49 +99,28 @@ func (h *AgentsHandler) tryRegenerateToCodex(c *gin.Context, runtimeCtx agentRun
 		}
 		chatReq.SystemPrompt += "## Previous conversation\n\n" + history
 	}
-	messageIDNew := uuid.New()
-	chatReq.MessageID = messageIDNew
+	// Regeneration is simply a fresh execution of the query through the unified
+	// chatstream interceptor — it owns the conversation/message persistence and
+	// the SSE message envelope, and streams the new answer live. The CLI session
+	// is not resumed; conversation history is carried via the system prompt.
 	setupAgentSSE(c)
-	startEvt := agentruntime.StreamEvent{
-		ID:        uuid.New(),
-		EventType: "message_start",
-		Payload: mustMarshalJSON(map[string]interface{}{
-			"conversation_id": chatReq.ConversationIDOrDefault(),
-			"message_id":      messageIDNew.String(),
-			"model":           chatReq.ModelName,
-			"created_at":      timeNow().Unix(),
-		}),
-		CreatedAt: timeNow(),
+	_, err = h.chatStreamInterceptor().Run(ctx, driver, chatstream.RunContext{
+		OrganizationID: runtimeCtx.Scope.OrganizationID,
+		WorkspaceID:    &agent.TenantID,
+		AccountID:      runtimeCtx.Scope.AccountID,
+		AgentID:        agent.ID,
+		CallerType:     runtimemodel.ConversationCallerAgent,
+		CallerID:       &agent.ID,
+		Source:         runtimemodel.ConversationSourceConsole,
+		ModelName:      modelName,
+		Query:          prompt,
+	}, chatReq, agentSSEStreamWriter(c))
+	if errors.Is(err, chatstream.ErrPreDispatch) {
+		// Nothing was streamed yet — fall back to the business runtime.
+		return false, err
 	}
-	_ = writeAgentSSEEvent(c, startEvt.ID.String(), startEvt.EventType, startEvt.Payload)
-
-	result, err := driver.ChatStream(ctx, chatReq,
-		func(chunk string) error {
-			return writeAgentSSE(c, "message", gin.H{
-				"conversation_id": chatReq.ConversationIDOrDefault(),
-				"message_id":      messageIDNew.String(),
-				"answer":          chunk,
-			})
-		},
-		func(evt agentruntime.StreamEvent) error {
-			return writeAgentSSEEvent(c, evt.ID.String(), evt.EventType, evt.Payload)
-		},
-	)
 	if err != nil {
-		writeAgentSSE(c, "message_end", gin.H{
-			"conversation_id": chatReq.ConversationIDOrDefault(),
-			"status":          "error",
-			"metadata":        gin.H{"error": err.Error()},
-		})
-		return true, err
-	}
-	if result != nil {
-		writeAgentSSE(c, "message_end", gin.H{
-			"conversation_id": chatReq.ConversationIDOrDefault(),
-			"message_id":      messageIDNew.String(),
-			"status":          result.Status,
-			"metadata":        gin.H{"stream_event_count": result.StreamEventCount},
-		})
+		logger.WarnContext(ctx, "codex/claude regen completed with error (already streamed)", "agent_id", agent.ID, "error", err)
 	}
 	return true, nil
 }

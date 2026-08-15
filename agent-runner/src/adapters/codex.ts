@@ -49,7 +49,7 @@ export async function runCodex(req: RunRequest, deps: AdapterDeps): Promise<Adap
     env: req.env,
     config,
   });
-  const thread = codex.startThread({
+  const threadOptions = {
     model: req.model,
     workingDirectory: req.cwd,
     // danger-full-access: Codex 0.125+ auto-cancels MCP tool calls under
@@ -58,7 +58,12 @@ export async function runCodex(req: RunRequest, deps: AdapterDeps): Promise<Adap
     sandboxMode: (req.sandboxMode || 'danger-full-access') as 'read-only' | 'workspace-write' | 'danger-full-access',
     approvalPolicy: (req.approvalPolicy || 'never') as 'never' | 'on-request' | 'on-failure' | 'untrusted',
     skipGitRepoCheck: true,
-  });
+  } as const;
+  // Resume the CLI thread when continuing a conversation so the prior turns
+  // come from the session natively (instead of being replayed in the prompt).
+  const thread = req.resume
+    ? codex.resumeThread(req.resume, threadOptions)
+    : codex.startThread(threadOptions);
 
   let sessionId: string | null = req.sessionId || null;
   const lastText = new Map<string, string>(); // item id -> last emitted text (dedup)
