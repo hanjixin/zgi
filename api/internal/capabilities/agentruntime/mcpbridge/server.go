@@ -119,7 +119,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, rpcErr := s.handle(r.Context(), req.Method, req.Params)
+	result, rpcErr := s.handle(identityFromRequest(r.Context(), r), req.Method, req.Params)
 	if rpcErr != nil {
 		writeJSON(w, http.StatusOK, rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: rpcErr})
 		return
@@ -226,12 +226,37 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (interfac
 	if call.Arguments == nil {
 		call.Arguments = map[string]interface{}{}
 	}
-	result, err := s.engine.Invoke(ctx, tools.InvokeRequest{
+	// Resolve the owning provider by tool name. The engine looks providers up
+	// by id, and MCP calls only carry the tool name, so scan the builtin
+	// providers for the one that declares this tool.
+	providerID := ""
+	if s.manager != nil {
+		for _, p := range s.manager.ListProviders(tools.ToolProviderTypeBuiltin) {
+			for _, te := range p.GetEntity().Tools {
+				if te.Identity.Name == call.Name {
+					providerID = p.GetEntity().Identity.Name
+					break
+				}
+			}
+			if providerID != "" {
+				break
+			}
+		}
+	}
+	invokeReq := tools.InvokeRequest{
 		ProviderType: tools.ToolProviderTypeBuiltin,
+		ProviderID:   providerID,
 		ToolName:     call.Name,
 		Parameters:   call.Arguments,
 		InvokeFrom:   tools.ToolInvokeFromAgent,
-	})
+	}
+	if id := identityFromContext(ctx); id != nil {
+		invokeReq.UserID = id.UserID
+		invokeReq.TenantID = id.TenantID
+		invokeReq.ConversationID = id.ConversationID
+		invokeReq.AppID = id.AgentID
+	}
+	result, err := s.engine.Invoke(ctx, invokeReq)
 	if err != nil {
 		return mcpToolResult("", err.Error(), true), nil
 	}

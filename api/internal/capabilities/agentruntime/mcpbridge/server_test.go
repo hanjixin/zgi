@@ -7,10 +7,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/zgiai/zgi/api/internal/modules/tools"
+	"github.com/zgiai/zgi/api/internal/modules/tools/builtin"
 )
 
 // fakeProvider is a minimal builtin tool provider for tests.
@@ -219,6 +221,83 @@ func TestMCPSSEAuthRequired(t *testing.T) {
 	srv.ServeHTTP(w, req)
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", w.Code)
+	}
+}
+
+// captureRecorder holds the caller identity observed by a capturingTool. The
+// engine forks the tool before invoking, so the recorder is shared across the
+// original and every forked instance.
+type captureRecorder struct {
+	mu     sync.Mutex
+	userID string
+	convID string
+	appID  string
+}
+
+// capturingTool records the caller identity passed to Invoke so tests can
+// assert the mcpbridge forwards the X-Zgi-* headers into the tool engine.
+type capturingTool struct {
+	*builtin.BuiltinTool
+	rec *captureRecorder
+}
+
+func (t *capturingTool) Invoke(ctx context.Context, userID string, params map[string]interface{}, conversationID *string, appID *string, messageID *string) ([]tools.ToolInvokeMessage, error) {
+	t.rec.mu.Lock()
+	defer t.rec.mu.Unlock()
+	t.rec.userID = userID
+	if conversationID != nil {
+		t.rec.convID = *conversationID
+	}
+	if appID != nil {
+		t.rec.appID = *appID
+	}
+	return []tools.ToolInvokeMessage{builtin.CreateTextMessage("ok")}, nil
+}
+
+func (t *capturingTool) ForkToolRuntime(runtime *tools.ToolRuntime) tools.Tool {
+	return &capturingTool{BuiltinTool: t.BuiltinTool.ForkToolRuntime(runtime), rec: t.rec}
+}
+
+// TestMCPCallCarriesCallerIdentity verifies tools/call forwards the caller
+// identity the Go driver stamps on the MCP server http_headers into the tool
+// engine, so user-scoped tools (memory, ...) resolve the right account.
+func TestMCPCallCarriesCallerIdentity(t *testing.T) {
+	manager := tools.NewToolManager(nil)
+	rec := &captureRecorder{}
+	tool := &capturingTool{
+		BuiltinTool: builtin.NewBuiltinTool(tools.ToolEntity{
+			Identity:    tools.ToolIdentity{Name: "echo", Author: "test", Provider: "capture"},
+			Description: tools.ToolDescription{LLM: "echo"},
+		}, ""),
+		rec: rec,
+	}
+	prov := builtin.NewBuiltinProvider(tools.ToolProviderIdentity{Name: "capture", Label: tools.I18nText{}, Description: tools.I18nText{}})
+	prov.RegisterTool(tool)
+	_ = manager.RegisterProvider(prov)
+	srv := NewServer(tools.NewToolEngine(manager), manager, "")
+
+	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":{}}}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Zgi-User-Id", "user-1")
+	req.Header.Set("X-Zgi-Tenant-Id", "tenant-1")
+	req.Header.Set("X-Zgi-Conversation-Id", "conv-1")
+	req.Header.Set("X-Zgi-Agent-Id", "agent-1")
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", w.Code, w.Body.String())
+	}
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if rec.userID != "user-1" {
+		t.Fatalf("userID = %q, want user-1", rec.userID)
+	}
+	if rec.convID != "conv-1" {
+		t.Fatalf("conversationID = %q, want conv-1", rec.convID)
+	}
+	if rec.appID != "agent-1" {
+		t.Fatalf("appID = %q, want agent-1", rec.appID)
 	}
 }
 

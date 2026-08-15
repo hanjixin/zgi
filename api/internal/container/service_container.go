@@ -926,6 +926,8 @@ func (c *ServiceContainer) GetToolManager() *tools.ToolManager {
 		_ = c.toolManager.RegisterProvider(files_tools.NewProvider(c.GetFileService(), c.GetContentExtractor(), c.GetOrganizationService(), files_tools.WithFileListService(c.GetFileFolderService())))
 		_ = c.toolManager.RegisterProvider(workflow_tools.NewProvider(c.GetAutomationWorkflowRunner))
 		_ = c.toolManager.RegisterProvider(imagegenerator_tools.NewProvider(c.GetFileService(), c.GetLLMClient(), c.GetDefaultModelService()))
+		// Account-level user memory tools, callable by real agent CLIs via MCP.
+		_ = c.toolManager.RegisterProvider(memory.NewProvider(c.GetMemoryService()))
 
 		logger.Info("ToolManager initialized with builtin providers")
 	}

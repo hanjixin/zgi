@@ -382,6 +382,22 @@ func (d *CliDriver) seedMemoryFile(dir, systemPrompt string) error {
 func (d *CliDriver) resolveMcpServers(req agentruntime.ChatRequest) []agentruntime.McpServerConfig {
 	merged := append([]agentruntime.McpServerConfig{}, d.opts.McpServers...)
 	merged = append(merged, req.McpServers...)
+	// Stamp every MCP server with the caller identity so user-scoped ZGI tools
+	// (memory, knowledge, ...) resolve the right account/tenant. The headers
+	// ride the CLI's MCP http_headers to the ZGI mcpbridge.
+	sessionID := req.ConversationIDOrDefault()
+	for i := range merged {
+		if merged[i].Headers == nil {
+			merged[i].Headers = map[string]string{}
+		}
+		merged[i].Headers["X-Zgi-User-Id"] = req.UserID.String()
+		merged[i].Headers["X-Zgi-Tenant-Id"] = req.TenantID.String()
+		if req.WorkspaceID != nil {
+			merged[i].Headers["X-Zgi-Workspace-Id"] = req.WorkspaceID.String()
+		}
+		merged[i].Headers["X-Zgi-Agent-Id"] = req.AgentID.String()
+		merged[i].Headers["X-Zgi-Conversation-Id"] = sessionID.String()
+	}
 	return merged
 }
 

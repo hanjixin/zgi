@@ -270,6 +270,36 @@ func TestCliDriverGatewayEnvForClaude(t *testing.T) {
 	}
 }
 
+func TestCliDriverStampsCallerIdentityOnMcpServers(t *testing.T) {
+	driver := NewDriver(Options{AgentType: AgentTypeCodex})
+	userID := uuid.New()
+	tenantID := uuid.New()
+	conversationID := uuid.New()
+	servers := driver.resolveMcpServers(agentruntime.ChatRequest{
+		AgentID:        uuid.New(),
+		UserID:         userID,
+		TenantID:       tenantID,
+		ConversationID: &conversationID,
+		McpServers:     []agentruntime.McpServerConfig{{Name: "zgi-tools", Type: "http", URL: "http://x/mcp"}},
+	})
+	if len(servers) != 1 {
+		t.Fatalf("servers = %d, want 1", len(servers))
+	}
+	h := servers[0].Headers
+	for key, want := range map[string]string{
+		"X-Zgi-User-Id":         userID.String(),
+		"X-Zgi-Tenant-Id":       tenantID.String(),
+		"X-Zgi-Conversation-Id": conversationID.String(),
+	} {
+		if h[key] != want {
+			t.Fatalf("%s = %q, want %q", key, h[key], want)
+		}
+	}
+	if h["X-Zgi-Agent-Id"] == "" {
+		t.Fatal("X-Zgi-Agent-Id not stamped")
+	}
+}
+
 func TestCliDriverPassesModelSystemPromptAndMcpServers(t *testing.T) {
 	runner := &fakeRunner{events: []string{
 		dataLine(map[string]interface{}{"type": "session_started", "agent_session_id": "s"}),

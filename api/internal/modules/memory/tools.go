@@ -127,7 +127,7 @@ func newMemoryTool(service *Service, name, label, description string, params []t
 
 func (t *memoryTool) Invoke(ctx context.Context, userID string, params map[string]interface{}, conversationID *string, appID *string, messageID *string) ([]tools.ToolInvokeMessage, error) {
 	runtime := t.Runtime()
-	if runtime == nil || runtime.InvokeFrom != tools.ToolInvokeFromAIChat {
+	if runtime == nil || (runtime.InvokeFrom != tools.ToolInvokeFromAIChat && runtime.InvokeFrom != tools.ToolInvokeFromAgent) {
 		return nil, ErrUnauthorized
 	}
 	accountID, err := ResolveToolAccountID(userID)

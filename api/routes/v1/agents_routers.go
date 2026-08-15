@@ -24,6 +24,7 @@ import (
 	channelrepo "github.com/zgiai/zgi/api/internal/modules/llm/channel/repository"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
+	skillstools "github.com/zgiai/zgi/api/internal/modules/skillstools"
 	memorymodule "github.com/zgiai/zgi/api/internal/modules/memory"
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
@@ -75,6 +76,13 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 			)
 		}
 	}
+	skillsRuntime := newSkillRuntimeWithSandbox(toolEngine, toolManager, fileService, enterpriseService)
+	// Expose ZGI skills to real agent CLIs (Codex / Claude Code) via the MCP
+	// bridge: the skillstools provider rides the same tool manager the
+	// mcpbridge lists.
+	if toolManager != nil {
+		_ = toolManager.RegisterProvider(skillstools.NewProvider(skillsRuntime))
+	}
 	chatRuntimeService := runtimeservice.NewServiceWithSkillRuntime(
 		runtimerepo.NewRepositories(db),
 		llmClient,
@@ -83,7 +91,7 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 		fileService,
 		contentExtractor,
 		enterpriseService,
-		newSkillRuntimeWithSandbox(toolEngine, toolManager, fileService, enterpriseService),
+		skillsRuntime,
 		memoryService,
 		agentMemoryService,
 	)
