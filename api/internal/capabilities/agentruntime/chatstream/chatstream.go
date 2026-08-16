@@ -8,6 +8,7 @@ package chatstream
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -107,6 +108,7 @@ func (ic *Interceptor) Run(
 	})
 
 	var answer strings.Builder
+	var timeline []map[string]interface{}
 	result, err := driver.ChatStream(ctx, req,
 		func(chunk string) error {
 			if chunk == "" {
@@ -120,18 +122,36 @@ func (ic *Interceptor) Run(
 			})
 		},
 		func(evt agentruntime.StreamEvent) error {
-			return writer.WriteEvent(evt.ID.String(), evt.EventType, evt.Payload)
+			// Enrich intermediate events with the conversation/message ids so the
+			// console timeline can attach them to the streaming message (the CLI
+			// driver payloads carry only tool-specific fields).
+			payload := evt.Payload
+			if isTimelineEvent(evt.EventType) {
+				payload = enrichTimelinePayload(evt.Payload, conversation.ID, messageID)
+			}
+			if item := timelineItemFromEvent(evt.EventType, payload, evt.CreatedAt); item != nil {
+				timeline = append(timeline, item)
+			}
+			return writer.WriteEvent(evt.ID.String(), evt.EventType, payload)
 		},
 	)
 
 	status := runtimemodel.MessageStatusCompleted
 	meta := map[string]interface{}{}
+	// Persist the intermediate agent events (command_logged / file_change_logged
+	// / skill_call_*) alongside the answer so a reloaded console can replay the
+	// timeline instead of only showing the final message.
+	messageMeta := map[string]interface{}{}
+	if len(timeline) > 0 {
+		messageMeta[timelineMetadataKey] = timeline
+	}
 	if err != nil {
 		status = runtimemodel.MessageStatusError
 		meta["error"] = err.Error()
+		messageMeta["error"] = err.Error()
 		_ = ic.repos.Message.UpdateError(ctx, messageID, err.Error())
 	} else {
-		_ = ic.repos.Message.UpdateCompleted(ctx, messageID, answer.String(), map[string]interface{}{})
+		_ = ic.repos.Message.UpdateCompleted(ctx, messageID, answer.String(), messageMeta)
 	}
 	if result != nil {
 		meta["stream_event_count"] = result.StreamEventCount
@@ -154,4 +174,54 @@ func (ic *Interceptor) Run(
 	result.Answer = answer.String()
 	result.Status = status
 	return result, err
+}
+
+// timelineMetadataKey stores the agent's intermediate event timeline in the
+// message metadata so the console can replay command/file/skill events after a
+// reload. Kept separate from the business runtime's "runtime_timeline" format
+// to avoid coupling to its invocation model.
+const timelineMetadataKey = "agent_events"
+
+// isTimelineEvent reports whether an event should be persisted to the message
+// timeline metadata (and enriched with conversation/message ids for the SSE).
+func isTimelineEvent(eventType string) bool {
+	switch eventType {
+	case "command_logged", "file_change_logged", "skill_call_start", "skill_call_end", "skill_call_error":
+		return true
+	}
+	return false
+}
+
+// enrichTimelinePayload injects conversation_id / message_id into an
+// intermediate event payload so the frontend timeline can attach it to the
+// streaming message.
+func enrichTimelinePayload(raw json.RawMessage, conversationID, messageID uuid.UUID) json.RawMessage {
+	var payload map[string]interface{}
+	if len(raw) == 0 || json.Unmarshal(raw, &payload) != nil {
+		payload = map[string]interface{}{}
+	}
+	payload["conversation_id"] = conversationID.String()
+	payload["message_id"] = messageID.String()
+	enriched, err := json.Marshal(payload)
+	if err != nil {
+		return raw
+	}
+	return enriched
+}
+
+// timelineItemFromEvent converts an enriched timeline event into a compact
+// metadata record, or nil for events that should not be persisted.
+func timelineItemFromEvent(eventType string, payload json.RawMessage, createdAt time.Time) map[string]interface{} {
+	if !isTimelineEvent(eventType) {
+		return nil
+	}
+	var data map[string]interface{}
+	if len(payload) == 0 || json.Unmarshal(payload, &data) != nil {
+		data = map[string]interface{}{}
+	}
+	item := map[string]interface{}{"type": eventType, "created_at": createdAt.Unix()}
+	for k, v := range data {
+		item[k] = v
+	}
+	return item
 }

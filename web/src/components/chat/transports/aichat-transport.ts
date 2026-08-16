@@ -309,6 +309,32 @@ export function dispatchAIChatStreamEvent(
     case 'agent_progress':
       callbacks.onAgentProgress((data ?? {}) as AIChatAgentProgressEventData, eventId);
       break;
+    case 'command_logged':
+      // codex/claude shell command events render as a tool-planning progress
+      // item (the payload is enriched with conversation/message ids).
+      callbacks.onAgentProgress(
+        {
+          conversation_id: (data as Record<string, unknown>)?.conversation_id as string,
+          message_id: (data as Record<string, unknown>)?.message_id as string,
+          phase: 'tool_planning',
+          content: formatCommandLogged(data as Record<string, unknown>),
+          created_at: (data as Record<string, unknown>)?.created_at as number | undefined,
+        },
+        eventId
+      );
+      break;
+    case 'file_change_logged':
+      callbacks.onAgentProgress(
+        {
+          conversation_id: (data as Record<string, unknown>)?.conversation_id as string,
+          message_id: (data as Record<string, unknown>)?.message_id as string,
+          phase: 'tool_planning',
+          content: formatFileChangeLogged(data as Record<string, unknown>),
+          created_at: (data as Record<string, unknown>)?.created_at as number | undefined,
+        },
+        eventId
+      );
+      break;
     case 'agent_intermediate_answer':
       callbacks.onIntermediateAnswer((data ?? {}) as AIChatIntermediateAnswerEventData, eventId);
       break;
@@ -493,6 +519,22 @@ export function dispatchAIChatStreamEvent(
     default:
       break;
   }
+}
+
+function formatCommandLogged(data: Record<string, unknown>): string {
+  const command = typeof data?.command === 'string' ? data.command : '';
+  const stdout = typeof data?.stdout === 'string' && data.stdout ? data.stdout : '';
+  const exitCode = typeof data?.exit_code === 'number' ? data.exit_code : undefined;
+  const lines = [`$ ${command}`];
+  if (stdout) lines.push(stdout);
+  if (exitCode !== undefined) lines.push(`(exit code ${exitCode})`);
+  return lines.join('\n');
+}
+
+function formatFileChangeLogged(data: Record<string, unknown>): string {
+  const path = typeof data?.path === 'string' ? data.path : '';
+  const kind = typeof data?.kind === 'string' && data.kind ? data.kind : 'update';
+  return `file ${kind}: ${path}`;
 }
 
 export class AIChatTransport implements AIChatRuntimeTransport {
