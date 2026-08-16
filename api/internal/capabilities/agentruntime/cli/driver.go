@@ -46,6 +46,11 @@ type Options struct {
 	LLMGatewayURL         string
 	GatewayKeyResolver    agentruntime.GatewayKeyResolver
 
+	// SandboxURL/SandboxAPIKey, when set, run the Agent CLI inside a zgi-sandbox
+	// agent box instead of on the host.
+	SandboxURL    string
+	SandboxAPIKey string
+
 	WorkspaceSvc workspace.Service
 	Governance   *agentruntime.GovernanceApprovalService
 }
@@ -116,6 +121,13 @@ func (d *CliDriver) ChatStream(ctx context.Context, req agentruntime.ChatRequest
 	if err != nil {
 		return nil, err
 	}
+	var sandboxCfg *SandboxConfig
+	if d.opts.SandboxURL != "" {
+		// In sandbox mode the agent-runner owns the box workspace; skip the
+		// local workspace dir and let the runner resolve cwd to the box.
+		cwd = ""
+		sandboxCfg = &SandboxConfig{URL: d.opts.SandboxURL, APIKey: d.opts.SandboxAPIKey}
+	}
 
 	// Resume a prior conversation when a runner session id was persisted.
 	resume, _ := d.loadAgentSession(ctx, req.AgentID, sessionID)
@@ -152,6 +164,7 @@ func (d *CliDriver) ChatStream(ctx context.Context, req agentruntime.ChatRequest
 		Resume:          resume,
 		AskTimeoutMS:    d.opts.AskTimeoutMS,
 		McpServers:      d.resolveMcpServers(req),
+		Sandbox:         sandboxCfg,
 	}
 
 	stream, err := d.client.Run(ctx, runReq)
@@ -343,6 +356,9 @@ func (d *CliDriver) ensureEnabled() error {
 // if needed and seeding the Agent CLI's memory file. The runner executes the
 // Agent CLI with this as its working dir.
 func (d *CliDriver) ensureWorkspaceDir(ctx context.Context, req agentruntime.ChatRequest) (string, error) {
+	if d.opts.SandboxURL != "" {
+		return "", nil // sandbox mode: the agent-runner owns the box workspace
+	}
 	root := d.opts.WorkspaceRoot
 	if root == "" {
 		root = filepath.Join(os.TempDir(), "zgi-agents")

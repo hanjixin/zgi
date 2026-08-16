@@ -56,6 +56,8 @@ const (
 	envAgentRunnerMCPURL          = "ZGI_AGENT_MCP_URL"
 	envAgentRunnerMCPAPIKey       = "ZGI_AGENT_MCP_API_KEY"
 	envAgentRunnerLLMGatewayURL   = "ZGI_LLM_GATEWAY_URL"
+	envAgentRunnerSandboxURL      = "ZGI_AGENT_SANDBOX_URL"
+	envAgentRunnerSandboxAPIKey   = "ZGI_AGENT_SANDBOX_API_KEY"
 )
 
 // Database and cache keys.

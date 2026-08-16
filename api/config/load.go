@@ -132,6 +132,8 @@ func loadAgentRunnerConfig(cfg *Config, source *envSource) {
 		McpURL:            source.string("", envAgentRunnerMCPURL),
 		McpAPIKey:         source.string("", envAgentRunnerMCPAPIKey),
 		LLMGatewayURL:     source.string("", envAgentRunnerLLMGatewayURL),
+		SandboxURL:        source.string("", envAgentRunnerSandboxURL),
+		SandboxAPIKey:     source.string("", envAgentRunnerSandboxAPIKey),
 	}
 }
 

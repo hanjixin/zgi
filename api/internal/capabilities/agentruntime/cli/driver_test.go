@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -412,6 +414,48 @@ func TestCliDriverRuntimeType(t *testing.T) {
 	codex := NewDriver(Options{AgentType: AgentTypeCodex})
 	if codex.RuntimeType() != agentruntime.RuntimeTypeCodex {
 		t.Fatalf("codex driver runtime = %s, want codex", codex.RuntimeType())
+	}
+}
+
+func TestCliDriverSandboxModeForwardsConfigAndSkipsLocalWorkspace(t *testing.T) {
+	runner := &fakeRunner{events: []string{
+		dataLine(map[string]interface{}{"type": "session_started", "agent_session_id": "s"}),
+		dataLine(map[string]interface{}{"type": "done", "subtype": "success"}),
+	}}
+	srv := httptest.NewServer(runner.handler())
+	defer srv.Close()
+
+	root := t.TempDir()
+	agentID := uuid.New()
+	driver := NewDriver(Options{
+		AgentType:      AgentTypeClaude,
+		Enabled:        true,
+		RunnerURL:      srv.URL,
+		SandboxURL:     "http://127.0.0.1:2660",
+		SandboxAPIKey:  "sk-sandbox",
+		WorkspaceRoot:  root,
+	})
+	_, err := driver.ChatStream(context.Background(), agentruntime.ChatRequest{
+		AgentID:     agentID,
+		TenantID:    uuid.New(),
+		UserID:      uuid.New(),
+		UserMessage: "go",
+	}, nil, nil)
+	if err != nil {
+		t.Fatalf("ChatStream: %v", err)
+	}
+
+	if runner.lastRun.Sandbox == nil {
+		t.Fatal("expected run request to carry sandbox config")
+	}
+	if runner.lastRun.Sandbox.URL != "http://127.0.0.1:2660" {
+		t.Fatalf("sandbox.url = %q", runner.lastRun.Sandbox.URL)
+	}
+	if runner.lastRun.Cwd != "" {
+		t.Fatalf("cwd = %q, want empty in sandbox mode", runner.lastRun.Cwd)
+	}
+	if _, err := os.Stat(filepath.Join(root, agentID.String())); !os.IsNotExist(err) {
+		t.Fatalf("expected no workspace dir under %s in sandbox mode", root)
 	}
 }
 

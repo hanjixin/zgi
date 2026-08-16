@@ -39,6 +39,14 @@ type RunRequest struct {
 	// GatewayURL is the ZGI LLM gateway base URL. When set, the runner points
 	// codex/claude at the gateway instead of their external provider defaults.
 	GatewayURL string `json:"gateway_url,omitempty"`
+	// Sandbox, when set, runs the Agent CLI process inside a zgi-sandbox agent box.
+	Sandbox *SandboxConfig `json:"sandbox,omitempty"`
+}
+
+// SandboxConfig configures the zgi-sandbox agent-box runtime.
+type SandboxConfig struct {
+	URL    string `json:"url"`
+	APIKey string `json:"api_key,omitempty"`
 }
 
 // PermissionRequest is the body for POST /v1/agents/:sid/permission.

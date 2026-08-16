@@ -319,6 +319,8 @@ func initAgentRuntimeRouter(db *gorm.DB, chatRuntimeService runtimeservice.Servi
 		McpServers:        defaultMcpServers,
 		LLMGatewayURL:     cfg.AgentRunner.LLMGatewayURL,
 		GatewayKeyResolver: gatewayResolver,
+		SandboxURL:        cfg.AgentRunner.SandboxURL,
+		SandboxAPIKey:     cfg.AgentRunner.SandboxAPIKey,
 		WorkspaceSvc:      wsService,
 		Governance:        governance,
 	})
@@ -338,6 +340,8 @@ func initAgentRuntimeRouter(db *gorm.DB, chatRuntimeService runtimeservice.Servi
 		McpServers:        defaultMcpServers,
 		LLMGatewayURL:     cfg.AgentRunner.LLMGatewayURL,
 		GatewayKeyResolver: gatewayResolver,
+		SandboxURL:        cfg.AgentRunner.SandboxURL,
+		SandboxAPIKey:     cfg.AgentRunner.SandboxAPIKey,
 		WorkspaceSvc:      wsService,
 		Governance:        governance,
 	})

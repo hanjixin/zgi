@@ -96,6 +96,10 @@ type AgentRunnerConfig struct {
 	// gateway (e.g. http://127.0.0.1:2670). Each run authenticates with the
 	// organization's regular API key and usage is metered through it.
 	LLMGatewayURL string `json:"llm_gateway_url"`
+	// SandboxURL/SandboxAPIKey, when set, run the Agent CLI process inside a
+	// zgi-sandbox agent box instead of on the host.
+	SandboxURL    string `json:"sandbox_url,omitempty"`
+	SandboxAPIKey string `json:"-"`
 }
 
 type ServerConfig struct {
