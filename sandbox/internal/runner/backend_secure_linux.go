@@ -106,10 +106,7 @@ func (b *linuxSecureBackend) StartProcess(ctx context.Context, spec ProcessSpec)
 	var roBinds []string
 	if dir := strings.TrimSpace(b.agentCLIDir); dir != "" {
 		roBinds = append(roBinds, dir, "/opt/zgi/agent-cli")
-		if _, ok := env["PATH"]; !ok {
-			env = cloneEnv(env)
-			env["PATH"] = "/opt/zgi/agent-cli:" + defaultSecurePath
-		}
+		env = agentCliEnv(dir, env)
 	}
 	bwrapArgs := buildSecureBwrapArgs(secureBwrapSpec{
 		RootFS:        b.rootfs,

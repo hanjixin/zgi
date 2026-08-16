@@ -247,6 +247,14 @@ func TestAgentBoxConfigDefaults(t *testing.T) {
 	}
 }
 
+func TestMaxAgentProcessesValidation(t *testing.T) {
+	cfg := validStartupConfig()
+	cfg.MaxAgentProcesses = 0
+	if err := cfg.ValidateStartup(); err == nil || !strings.Contains(err.Error(), "ZGI_SANDBOX_MAX_AGENT_PROCESSES") {
+		t.Fatalf("expected non-positive MaxAgentProcesses to be rejected, got %v", err)
+	}
+}
+
 func TestPublicSnapshotOmitsSecrets(t *testing.T) {
 	cfg := Config{
 		Port:                       "2660",
@@ -617,5 +625,6 @@ func validStartupConfig() Config {
 		SecureRuntimeOpenFileLimit:                 128,
 		ProxyTimeout:                               20,
 		EgressProxyMaxBodyBytes:                    1024 * 1024,
+		MaxAgentProcesses:                          4,
 	}
 }

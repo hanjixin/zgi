@@ -161,6 +161,7 @@ func (c Config) ValidateStartup() error {
 		requirePositiveInt64("ZGI_SANDBOX_MAX_DEPENDENCY_PROFILE_SIZE_BYTES", c.MaxDependencyProfileSizeBytes),
 		requirePositiveInt("ZGI_SANDBOX_DEPENDENCY_PROFILE_BUILD_TIMEOUT_SECONDS", c.DependencyProfileBuildTimeoutSeconds),
 		requirePositiveInt("ZGI_SANDBOX_DEPENDENCY_BUILD_WORKER_INTERVAL_SECONDS", c.DependencyBuildWorkerIntervalSeconds),
+		requirePositiveInt("ZGI_SANDBOX_MAX_AGENT_PROCESSES", c.MaxAgentProcesses),
 		requireNonNegativeInt("ZGI_SANDBOX_MAX_CONCURRENT_EXECUTIONS", c.MaxConcurrentExecutions),
 		requireNonNegativeInt("ZGI_SANDBOX_MAX_CONCURRENT_EXECUTIONS_PER_PROFILE", c.MaxConcurrentExecutionsPerProfile),
 		requireNonNegativeInt("ZGI_SANDBOX_MAX_ACTIVE_PER_ORGANIZATION", c.MaxActivePerOrganization),

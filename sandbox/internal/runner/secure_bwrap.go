@@ -76,6 +76,20 @@ func sortedEnvKeys(env map[string]string) []string {
 	return keys
 }
 
+// agentCliEnv returns a copy of env with the box's agent CLI directory
+// (/opt/zgi/agent-cli) prepended to PATH so boxed claude/codex invocations
+// resolve inside the ro-bound rootfs. The caller's PATH (or defaultSecurePath
+// when it is absent) is preserved after the prepend.
+func agentCliEnv(_ string, env map[string]string) map[string]string {
+	env = cloneEnv(env)
+	base := env["PATH"]
+	if base == "" {
+		base = defaultSecurePath
+	}
+	env["PATH"] = "/opt/zgi/agent-cli:" + base
+	return env
+}
+
 func secureDependencyProfileEnv(profile string) (map[string]string, error) {
 	profile = strings.TrimSpace(profile)
 	if profile == "" {

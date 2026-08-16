@@ -114,6 +114,41 @@ func TestBuildSecureBwrapArgsAddsProfileEnvAfterRequestEnv(t *testing.T) {
 	}
 }
 
+func TestAgentCliEnvPrependsAgentCLIDirToExistingPath(t *testing.T) {
+	env := agentCliEnv("/usr/local/bin", map[string]string{"PATH": "/usr/bin:/bin"})
+	if got, want := env["PATH"], "/opt/zgi/agent-cli:/usr/bin:/bin"; got != want {
+		t.Fatalf("PATH = %q, want %q", got, want)
+	}
+}
+
+func TestAgentCliEnvDefaultsPathWhenAbsent(t *testing.T) {
+	env := agentCliEnv("/usr/local/bin", map[string]string{})
+	if got, want := env["PATH"], "/opt/zgi/agent-cli:"+defaultSecurePath; got != want {
+		t.Fatalf("PATH = %q, want %q", got, want)
+	}
+}
+
+func TestAgentCliEnvReturnsNonNilMapForNilInput(t *testing.T) {
+	env := agentCliEnv("/usr/local/bin", nil)
+	if env == nil {
+		t.Fatal("expected non-nil env for nil input")
+	}
+	if got, want := env["PATH"], "/opt/zgi/agent-cli:"+defaultSecurePath; got != want {
+		t.Fatalf("PATH = %q, want %q", got, want)
+	}
+}
+
+func TestAgentCliEnvPreservesUnrelatedEnv(t *testing.T) {
+	src := map[string]string{"PATH": "/usr/bin:/bin", "HOME": "/root"}
+	env := agentCliEnv("/usr/local/bin", src)
+	if env["HOME"] != "/root" {
+		t.Fatalf("HOME = %q, want /root", env["HOME"])
+	}
+	if src["PATH"] != "/usr/bin:/bin" {
+		t.Fatalf("input env mutated: PATH = %q", src["PATH"])
+	}
+}
+
 func TestSecureDependencyProfileEnvRejectsUnsafeName(t *testing.T) {
 	_, err := secureDependencyProfileEnv("../skill-office")
 	if err == nil {
