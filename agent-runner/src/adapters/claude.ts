@@ -2,12 +2,13 @@
 // @anthropic-ai/claude-agent-sdk (query()). Streams normalized events.
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import type { Readable, Writable } from 'node:stream';
+import { PassThrough, Writable } from 'node:stream';
+import type { Readable } from 'node:stream';
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
 
 import type { AdapterDeps, McpServerConfig, PermissionDecision, RunRequest } from '../protocol.js';
-import type { ProcessHandle } from '../sandboxClient.js';
+import type { Box, ProcessHandle } from '../sandboxClient.js';
 
 export interface AdapterResult {
   sessionId: string | null;
@@ -76,6 +77,159 @@ export function toSpawnedProcess(handle: ProcessHandle): SpawnedProcess {
 }
 
 /**
+ * Lazily wrap an in-flight `openProcess` promise as a `SpawnedProcess` for the
+ * claude-agent-sdk's `spawnClaudeCodeProcess` option. The SDK calls the spawn
+ * hook synchronously and expects a usable `stdin`/`stdout` immediately, but the
+ * boxed process handle only resolves once the sandbox has started the CLI and
+ * streamed its `started` frame. So stdin writes made before resolution are
+ * queued and replayed in order; stdout is an eagerly-created PassThrough that
+ * the handle's stdout is piped into once ready. Exit/error are forwarded from
+ * `handle.exited` (or from a rejected handle promise) through the backing
+ * EventEmitter, and stderr is drained to `process.stderr` so its buffer cannot
+ * grow unbounded.
+ */
+export function toLazySpawnedProcess(
+  handlePromise: Promise<ProcessHandle>,
+  signal?: AbortSignal,
+): SpawnedProcess {
+  const ee = new EventEmitter();
+  let handle: ProcessHandle | null = null;
+  let killed = false;
+  let killQueued = false;
+  let exitCode: number | null = null;
+
+  // stdout is created eagerly so the SDK can start reading before the boxed
+  // process is ready; the handle's stdout is piped in once it resolves.
+  const stdout = new PassThrough();
+
+  interface QueuedWrite {
+    chunk: Buffer;
+    cb: (err?: Error | null) => void;
+  }
+  const queuedWrites: QueuedWrite[] = [];
+  let queuedEnd: ((err?: Error | null) => void) | null = null;
+
+  const stdin = new Writable({
+    write(chunk, _encoding, cb) {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      if (handle) {
+        handle.stdin.write(buf, (err) => cb(err ?? null));
+        return;
+      }
+      queuedWrites.push({ chunk: buf, cb });
+    },
+    final(cb) {
+      if (handle) {
+        handle.stdin.end(() => cb());
+        return;
+      }
+      queuedEnd = cb;
+    },
+    destroy(err, cb) {
+      if (handle) handle.stdin.destroy(err ?? undefined);
+      cb(err ?? null);
+    },
+  });
+
+  const flush = (h: ProcessHandle): void => {
+    for (const w of queuedWrites.splice(0)) {
+      h.stdin.write(w.chunk, (err) => w.cb(err ?? null));
+    }
+    if (queuedEnd) {
+      const endCb = queuedEnd;
+      queuedEnd = null;
+      h.stdin.end(() => endCb());
+    }
+  };
+
+  const failPending = (err: Error): void => {
+    for (const w of queuedWrites.splice(0)) w.cb(err);
+    if (queuedEnd) {
+      const endCb = queuedEnd;
+      queuedEnd = null;
+      endCb(err);
+    }
+  };
+
+  const spawned: Omit<SpawnedProcess, 'exitCode'> & {
+    exitCode: number | null;
+  } = {
+    stdin,
+    stdout,
+    get killed() {
+      return killed;
+    },
+    get exitCode() {
+      return exitCode;
+    },
+    signalCode: null,
+    kill(_signal: NodeJS.Signals): boolean {
+      killed = true;
+      if (handle) {
+        handle.kill();
+      } else {
+        killQueued = true;
+      }
+      return true;
+    },
+    on(event, listener) {
+      ee.on(event, listener as (...args: any[]) => void);
+      return spawned;
+    },
+    once(event, listener) {
+      ee.once(event, listener as (...args: any[]) => void);
+      return spawned;
+    },
+    off(event, listener) {
+      ee.off(event, listener as (...args: any[]) => void);
+      return spawned;
+    },
+  };
+
+  handlePromise.then(
+    (h) => {
+      handle = h;
+      // Drain stderr to the host log so the boxed CLI's stderr stays observable
+      // and its Readable buffer cannot grow without bound over a long session.
+      h.stderr.on('error', () => {});
+      h.stderr.pipe(process.stderr, { end: false });
+      // Forward stdout into the eagerly-created PassThrough the SDK reads from.
+      h.stdout.on('error', (err) => stdout.destroy(err as Error));
+      h.stdout.pipe(stdout);
+
+      flush(h);
+      if (killQueued) h.kill();
+
+      h.exited.then(
+        (code) => {
+          exitCode = code;
+          ee.emit('exit', code, null);
+        },
+        (err) => {
+          ee.emit('error', err as Error);
+        },
+      );
+    },
+    (err) => {
+      failPending(err as Error);
+      ee.emit('error', err as Error);
+    },
+  );
+
+  if (signal) {
+    if (signal.aborted) {
+      void spawned.kill('SIGTERM');
+    } else {
+      signal.addEventListener('abort', () => {
+        void spawned.kill('SIGTERM');
+      }, { once: true });
+    }
+  }
+
+  return spawned;
+}
+
+/**
  * Run one Claude Code turn.
  */
 export async function runClaude(req: RunRequest, deps: AdapterDeps): Promise<AdapterResult> {
@@ -115,25 +269,18 @@ export async function runClaude(req: RunRequest, deps: AdapterDeps): Promise<Ada
     return { behavior: 'deny' as const, updatedPermissions: [{ tool: toolName, mode: 'dontAsk' }] };
   };
 
-  // When the run is sandboxed and a box manager is wired in, spawn the CLI
-  // inside the session's box and hand the boxed handle to the SDK. The box
-  // workspace is the cwd, so the SDK's own cwd is cleared.
+  // When the run is sandboxed and a box manager is wired in, ensure the box
+  // exists up front so the CLI has a workspace to run in. The actual process
+  // spawn is deferred to `spawnClaudeCodeProcess`, which the SDK invokes with
+  // the real protocol flags (command/args/env) the CLI needs to speak the SDK.
   const boxManager = deps.boxManager;
-  let boxed: ProcessHandle | null = null;
+  let box: Box | null = null;
   if (req.sandbox && boxManager) {
-    const box = await boxManager.ensure(req.sessionId, req);
-    boxed = await boxManager.openProcess(box, {
-      command: 'claude',
-      args: [],
-      env: req.env,
-    });
-    // Drain the boxed CLI's stderr so its Readable buffer cannot grow without
-    // bound over a long session, and so CLI stderr remains observable in logs.
-    boxed.stderr.pipe(process.stderr);
+    box = await boxManager.ensure(req.sessionId, req);
   }
 
   const options: Record<string, unknown> = {
-    cwd: boxed ? '' : req.cwd,
+    cwd: req.cwd,
     allowedTools: req.allowedTools,
     disallowedTools: req.disallowedTools,
     permissionMode: req.permissionMode || 'acceptEdits',
@@ -141,8 +288,19 @@ export async function runClaude(req: RunRequest, deps: AdapterDeps): Promise<Ada
     abortController,
     env: req.env,
   };
-  if (boxed) {
-    options.spawnClaudeCodeProcess = () => toSpawnedProcess(boxed);
+  if (box && boxManager) {
+    options.spawnClaudeCodeProcess = (spawnOpts: {
+      command: string;
+      args: string[];
+      env?: Record<string, string>;
+    }) =>
+      toLazySpawnedProcess(
+        boxManager.openProcess(box, {
+          command: spawnOpts.command,
+          args: spawnOpts.args,
+          env: { ...req.env, ...(spawnOpts.env ?? {}) },
+        }),
+      );
   }
   if (req.model) options.model = req.model;
   if (req.resume) options.resume = req.resume;

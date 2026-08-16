@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { Readable, Writable } from 'node:stream';
 import { test } from 'node:test';
 
-import { toSpawnedProcess } from '../src/adapters/claude.js';
+import { toLazySpawnedProcess, toSpawnedProcess } from '../src/adapters/claude.js';
 import type { ProcessHandle } from '../src/sandboxClient.js';
 
 function fakeHandle(overrides: Partial<ProcessHandle> = {}): ProcessHandle {
@@ -54,6 +54,58 @@ test('toSpawnedProcess bridges a rejected handle.exited to the error event', asy
   const boom = new Error('boom');
   const handle = fakeHandle({ exited: Promise.reject(boom) });
   const spawned = toSpawnedProcess(handle);
+
+  const errors: unknown[] = [];
+  spawned.on('error', (err) => errors.push(err));
+
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0], boom);
+});
+
+test('toLazySpawnedProcess buffers stdin writes until the handle resolves', async () => {
+  const written: string[] = [];
+  let resolveHandle!: (h: ProcessHandle) => void;
+  const promise = new Promise<ProcessHandle>((resolve) => { resolveHandle = resolve; });
+
+  const handle = fakeHandle({
+    stdin: new Writable({
+      write(chunk, _enc, cb) {
+        written.push(chunk.toString());
+        cb();
+      },
+    }),
+    stderr: Readable.from([]),
+  });
+
+  const spawned = toLazySpawnedProcess(promise);
+
+  spawned.stdin.write('hello');
+  spawned.stdin.write('world');
+
+  resolveHandle(handle);
+  await new Promise((r) => setImmediate(r));
+
+  assert.deepEqual(written, ['hello', 'world']);
+});
+
+test('toLazySpawnedProcess emits exit when the handle exits', async () => {
+  const handle = fakeHandle({ exited: Promise.resolve(0), stderr: Readable.from([]) });
+  const spawned = toLazySpawnedProcess(Promise.resolve(handle));
+
+  const exitEvents: Array<[number | null, unknown]> = [];
+  spawned.on('exit', (code, signal) => exitEvents.push([code, signal]));
+
+  await new Promise((r) => setImmediate(r));
+
+  assert.deepEqual(exitEvents, [[0, null]]);
+  assert.equal(spawned.exitCode, 0);
+});
+
+test('toLazySpawnedProcess emits error when the handle promise rejects', async () => {
+  const boom = new Error('boom');
+  const spawned = toLazySpawnedProcess(Promise.reject(boom));
 
   const errors: unknown[] = [];
   spawned.on('error', (err) => errors.push(err));
