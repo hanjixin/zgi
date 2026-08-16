@@ -181,6 +181,7 @@ services:
     volumes:
       - api-storage:/app/storage
       - api-logs:/app/logs
+      - /home/ubuntu/zgi-agents:/home/ubuntu/zgi-agents
     ports:
       - "${API_PORT:-2670}:2670"
     healthcheck:
@@ -189,6 +190,19 @@ services:
       timeout: 5s
       retries: 10
       start_period: 40s
+    restart: unless-stopped
+
+  agent-runner:
+    image: ${AGENT_RUNNER_IMAGE_NAME:-zgi-agent-runner}:${IMAGE_TAG:-latest}
+    build:
+      context: ../agent-runner
+      dockerfile: Dockerfile
+    environment:
+      AGENT_RUNNER_PORT: 3101
+    volumes:
+      - /home/ubuntu/zgi-agents:/home/ubuntu/zgi-agents
+    ports:
+      - "${AGENT_RUNNER_PORT:-3101}:3101"
     restart: unless-stopped
 
   runner:
