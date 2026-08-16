@@ -3,7 +3,7 @@
 // plane over SSE.
 import http from 'node:http';
 
-import { createApp, runs } from './app.js';
+import { boxManager, createApp, runs } from './app.js';
 
 const PORT = Number(process.env.AGENT_RUNNER_PORT || 3001);
 
@@ -12,10 +12,11 @@ server.listen(PORT, () => {
   console.log(`[agent-runner] listening on :${PORT}`);
 });
 
-// Graceful shutdown: abort all active runs.
+// Graceful shutdown: abort all active runs and dispose any sandbox boxes.
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
-  process.on(sig, () => {
+  process.on(sig, async () => {
     for (const run of runs.values()) run.controller.abort();
+    await boxManager?.closeAll();
     server.close(() => process.exit(0));
   });
 }

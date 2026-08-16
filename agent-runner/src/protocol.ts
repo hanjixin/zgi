@@ -1,6 +1,8 @@
 // Normalized event protocol shared between the runner and the ZGI control plane.
 // Every message is a single JSON object written as one SSE `data:` line.
 
+import type { BoxManager } from './boxManager.js';
+
 export type AgentType = 'claude' | 'codex';
 
 export interface RunRequest {
@@ -62,6 +64,8 @@ export interface AdapterDeps {
   abortController: AbortController;
   /** Map of pending approval correlation ids to their resolvers (owned by the app). */
   pending: Map<string, (value: PermissionDecision | null) => void>;
+  /** Per-session sandbox box registry; set when the run is sandboxed. */
+  boxManager?: BoxManager;
 }
 
 export function ev(type: string, payload: Record<string, unknown> = {}): NormalizedEvent {

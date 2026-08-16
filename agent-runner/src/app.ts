@@ -5,6 +5,8 @@ import { randomUUID } from 'node:crypto';
 import express, { type Express, type Request, type Response } from 'express';
 
 import { ev, parseRunRequest, sse, type PermissionDecision } from './protocol.js';
+import { SandboxClient } from './sandboxClient.js';
+import { BoxManager } from './boxManager.js';
 import { runClaude } from './adapters/claude.js';
 import { runCodex } from './adapters/codex.js';
 import { runStub } from './adapters/stub.js';
@@ -17,6 +19,11 @@ export interface ActiveRun {
 
 // Active runs keyed by the control-plane session id.
 export const runs = new Map<string, ActiveRun>();
+
+// Per-session sandbox box registry; created lazily on the first sandboxed run
+// and swept on server shutdown. Server exits the process, so a single registry
+// (pointing at the shared zgi-sandbox) is sufficient.
+export let boxManager: BoxManager | undefined;
 
 function makeRunKey(sessionId: string): string {
   return sessionId || `run-${randomUUID()}`;
@@ -48,6 +55,11 @@ export function createApp(): Express {
     // bash/python/git, so injected keys are merged on top of process.env rather
     // than replacing it.
     runReq.env = { ...(process.env as Record<string, string>), ...runReq.env };
+
+    if (runReq.sandbox) {
+      const client = new SandboxClient({ baseUrl: runReq.sandbox.url, apiKey: runReq.sandbox.api_key });
+      boxManager = new BoxManager(client);
+    }
 
     const runKey = makeRunKey(runReq.sessionId);
     if (runs.has(runKey)) {
@@ -87,7 +99,7 @@ export function createApp(): Express {
     const stubMode = process.env.AGENT_RUNNER_STUB === '1';
     const adapter = stubMode ? runStub : runReq.agentType === 'claude' ? runClaude : runCodex;
     try {
-      await adapter(runReq, { emit, emitSession, abortController: controller, pending });
+      await adapter(runReq, { emit, emitSession, abortController: controller, pending, boxManager });
     } catch (err) {
       emit('error', { message: err instanceof Error ? err.message : String(err) });
     }
