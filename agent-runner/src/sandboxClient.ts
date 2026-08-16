@@ -28,6 +28,10 @@ interface SandboxClientOptions {
   apiKey?: string;
 }
 
+export function createSandboxClient(opts: SandboxClientOptions): SandboxClient {
+  return new SandboxClient(opts);
+}
+
 export class SandboxClient {
   private baseUrl: string;
   private apiKey: string | undefined;

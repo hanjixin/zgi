@@ -1,8 +1,12 @@
 // Codex adapter — drives the real Codex CLI through the official
 // @openai/codex-sdk (Codex.startThread().runStreamed()). Streams normalized events.
 import { Codex } from '@openai/codex-sdk';
+import { fileURLToPath } from 'node:url';
 
 import type { AdapterDeps, McpServerConfig, RunRequest } from '../protocol.js';
+import type { Box } from '../sandboxClient.js';
+
+const bridgePath = fileURLToPath(new URL('../codexBridge.mjs', import.meta.url));
 
 export interface AdapterResult {
   sessionId: string | null;
@@ -44,10 +48,26 @@ export async function runCodex(req: RunRequest, deps: AdapterDeps): Promise<Adap
     config.model_provider = 'zgi';
   }
 
+  // When the run is sandboxed, resolve the session's box and point the SDK at
+  // the bridge executable, which tunnels `codex exec …` into the box. The bridge
+  // learns the box from the ZGI_* env vars we inject here.
+  let box: Box | null = null;
+  if (req.sandbox) {
+    if (!deps.boxManager) throw new Error('agent sandbox configured but no box manager');
+    box = await deps.boxManager.ensure(req.sessionId, req);
+    req.env = {
+      ...req.env,
+      ZGI_SANDBOX_URL: req.sandbox.url,
+      ZGI_SANDBOX_API_KEY: req.sandbox.api_key ?? '',
+      ZGI_BOX_ID: box.boxId,
+    };
+  }
+
   const codex = new Codex({
     apiKey: req.env.OPENAI_API_KEY || req.env.CODEX_API_KEY || process.env.OPENAI_API_KEY,
     env: req.env,
     config,
+    codexPathOverride: req.sandbox ? bridgePath : undefined,
   });
   const threadOptions = {
     model: req.model,
