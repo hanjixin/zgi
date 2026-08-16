@@ -210,6 +210,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/sandbox/dependencies/update", s.handleDependencyUpdate)
 	s.mux.HandleFunc("/v1/sandboxes", s.handleSandboxes)
 	s.mux.HandleFunc("/v1/sandboxes/", s.handleSandboxByID)
+	s.mux.HandleFunc("/v1/agent-boxes", s.handleAgentBoxCreate)
+	s.mux.HandleFunc("/v1/agent-boxes/", s.handleAgentBoxByID)
 	s.mux.HandleFunc("/v1/exec/code", s.handleExecCode)
 	s.mux.HandleFunc("/v1/exec/command", s.handleExecCommand)
 	s.mux.HandleFunc("/v1/exec/template", s.handleExecTemplate)
