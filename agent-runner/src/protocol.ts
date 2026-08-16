@@ -26,6 +26,13 @@ export interface RunRequest {
   mcpServers?: McpServerConfig[];
   /** ZGI LLM gateway base URL; when set, codex/claude route model calls through it. */
   gatewayUrl?: string;
+  /** When set, the Agent CLI process runs inside a zgi-sandbox agent box. */
+  sandbox?: SandboxConfig;
+}
+
+export interface SandboxConfig {
+  url: string;
+  api_key?: string;
 }
 
 /** A remote/stdio MCP server the Agent CLI may connect to. */
@@ -94,7 +101,16 @@ export function parseRunRequest(body: unknown): RunRequest {
     askTimeoutMs: Number(raw.ask_timeout_ms || 300_000),
     mcpServers: parseMcpServers(raw.mcp_servers),
     gatewayUrl: raw.gateway_url ? String(raw.gateway_url) : undefined,
+    sandbox: parseSandbox(raw.sandbox),
   };
+}
+
+function parseSandbox(value: unknown): SandboxConfig | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = value as Record<string, unknown>;
+  const url = String(raw.url || '');
+  if (!url) return undefined;
+  return { url, api_key: raw.api_key ? String(raw.api_key) : undefined };
 }
 
 function parseMcpServers(value: unknown): McpServerConfig[] | undefined {
