@@ -30,8 +30,16 @@ func (ic *Interceptor) ensureConversation(ctx context.Context, rc RunContext, re
 	if title == "" {
 		title = "New conversation"
 	}
+	// Use the requested conversation id when creating a fresh conversation so
+	// the SSE conversation_id matches what the frontend already tracks as its
+	// active conversation (otherwise the streaming message lives under a
+	// different id and the terminal event cannot reset the sending state).
+	conversationID := uuid.New()
+	if req.ConversationID != nil {
+		conversationID = *req.ConversationID
+	}
 	conversation := &runtimemodel.Conversation{
-		ID:               uuid.New(),
+		ID:               conversationID,
 		OrganizationID:   rc.OrganizationID,
 		WorkspaceID:      rc.WorkspaceID,
 		AccountID:        rc.AccountID,
