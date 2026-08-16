@@ -22,6 +22,7 @@ type linuxSecureBackend struct {
 	prlimitBin          string
 	limits              secureRuntimeLimits
 	allowShell          bool
+	agentCLIDir         string
 }
 
 func newLinuxSecureBackend(cfg config.Config) (backend, error) {
@@ -58,6 +59,7 @@ func newLinuxSecureBackend(cfg config.Config) (backend, error) {
 		prlimitBin:          prlimitBin,
 		limits:              limits,
 		allowShell:          true,
+		agentCLIDir:         strings.TrimSpace(cfg.AgentCLIDir),
 	}, nil
 }
 
@@ -96,8 +98,29 @@ func (b *linuxSecureBackend) Run(parent context.Context, req Request, workDir st
 	return b.exec(runCtx, root, req.DependencyProfile, req.DependencyArtifactChecksum, spec.binary, spec.args(containerPath), req.EnableNetwork, stdoutLimit, stderrLimit, req.Stdin, nil)
 }
 
-func (b *linuxSecureBackend) StartProcess(context.Context, ProcessSpec) (*ProcessSession, error) {
-	return nil, errors.New("linux-secure StartProcess not implemented yet")
+func (b *linuxSecureBackend) StartProcess(ctx context.Context, spec ProcessSpec) (*ProcessSession, error) {
+	env := spec.Env
+	if env == nil {
+		env = map[string]string{}
+	}
+	var roBinds []string
+	if dir := strings.TrimSpace(b.agentCLIDir); dir != "" {
+		roBinds = append(roBinds, dir, "/opt/zgi/agent-cli")
+		if _, ok := env["PATH"]; !ok {
+			env = cloneEnv(env)
+			env["PATH"] = "/opt/zgi/agent-cli:" + defaultSecurePath
+		}
+	}
+	bwrapArgs := buildSecureBwrapArgs(secureBwrapSpec{
+		RootFS:        b.rootfs,
+		WorkDir:       spec.WorkDir,
+		Binary:        spec.Command,
+		Args:          spec.Args,
+		EnableNetwork: spec.EnableNetwork,
+		Env:           env,
+		ExtraRoBinds:  roBinds,
+	})
+	return startStreamedCommand(ctx, b.bwrapBin, bwrapArgs, spec.WorkDir, env)
 }
 
 func (b *linuxSecureBackend) ExecuteCommand(parent context.Context, spec CommandSpec) (CommandResult, error) {

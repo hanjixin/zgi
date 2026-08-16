@@ -28,9 +28,13 @@ type ProcessSession struct {
 }
 
 func (b *processBackend) StartProcess(ctx context.Context, spec ProcessSpec) (*ProcessSession, error) {
-	cmd := exec.CommandContext(ctx, spec.Command, spec.Args...)
-	cmd.Dir = spec.WorkDir
-	cmd.Env = processEnv(spec.Env, nil)
+	return startStreamedCommand(ctx, spec.Command, spec.Args, spec.WorkDir, spec.Env)
+}
+
+func startStreamedCommand(ctx context.Context, command string, args []string, dir string, env map[string]string) (*ProcessSession, error) {
+	cmd := exec.CommandContext(ctx, command, args...)
+	cmd.Dir = dir
+	cmd.Env = processEnv(env, nil)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	stdin, err := cmd.StdinPipe()
@@ -68,6 +72,14 @@ func (b *processBackend) StartProcess(ctx context.Context, spec ProcessSpec) (*P
 			return cmd.Process.Kill()
 		},
 	}, nil
+}
+
+func cloneEnv(src map[string]string) map[string]string {
+	out := make(map[string]string, len(src))
+	for k, v := range src {
+		out[k] = v
+	}
+	return out
 }
 
 // StartProcess exposes the backend's streaming process API on the Service. It

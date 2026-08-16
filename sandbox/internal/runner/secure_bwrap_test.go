@@ -1,6 +1,9 @@
 package runner
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestBuildSecureBwrapArgsEnforcesIsolationContract(t *testing.T) {
 	args := buildSecureBwrapArgs(secureBwrapSpec{
@@ -37,6 +40,23 @@ func TestBuildSecureBwrapArgsEnforcesIsolationContract(t *testing.T) {
 	}
 	if args[len(args)-2] != "python3" || args[len(args)-1] != "script.py" {
 		t.Fatalf("expected binary and args at end, got %#v", args)
+	}
+}
+
+func TestBuildSecureBwrapArgsIncludesExtraRoBinds(t *testing.T) {
+	args := buildSecureBwrapArgs(secureBwrapSpec{
+		RootFS:        "/rootfs",
+		WorkDir:       "/work",
+		Binary:        "claude",
+		EnableNetwork: false,
+		ExtraRoBinds:  []string{"/usr/local/bin", "/opt/zgi/agent-cli"},
+	})
+	argsStr := strings.Join(args, " ")
+	if !strings.Contains(argsStr, "--ro-bind /usr/local/bin /opt/zgi/agent-cli") {
+		t.Fatalf("missing extra ro-bind, got: %s", argsStr)
+	}
+	if !strings.Contains(argsStr, "--unshare-net") {
+		t.Fatalf("expected --unshare-net when network disabled, got: %s", argsStr)
 	}
 }
 

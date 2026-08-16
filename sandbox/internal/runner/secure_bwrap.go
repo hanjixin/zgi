@@ -18,6 +18,7 @@ type secureBwrapSpec struct {
 	ProfileEnv          map[string]string
 	ProfileHostDir      string
 	ProfileContainerDir string
+	ExtraRoBinds        []string
 }
 
 func buildSecureBwrapArgs(spec secureBwrapSpec) []string {
@@ -51,6 +52,9 @@ func buildSecureBwrapArgs(spec secureBwrapSpec) []string {
 	}
 	if spec.ProfileHostDir != "" && spec.ProfileContainerDir != "" {
 		args = append(args, "--ro-bind", spec.ProfileHostDir, spec.ProfileContainerDir)
+	}
+	for i := 0; i+1 < len(spec.ExtraRoBinds); i += 2 {
+		args = append(args, "--ro-bind", spec.ExtraRoBinds[i], spec.ExtraRoBinds[i+1])
 	}
 	if !spec.EnableNetwork {
 		args = append(args, "--unshare-net")
