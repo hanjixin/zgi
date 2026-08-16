@@ -96,6 +96,10 @@ func (b *linuxSecureBackend) Run(parent context.Context, req Request, workDir st
 	return b.exec(runCtx, root, req.DependencyProfile, req.DependencyArtifactChecksum, spec.binary, spec.args(containerPath), req.EnableNetwork, stdoutLimit, stderrLimit, req.Stdin, nil)
 }
 
+func (b *linuxSecureBackend) StartProcess(context.Context, ProcessSpec) (*ProcessSession, error) {
+	return nil, errors.New("linux-secure StartProcess not implemented yet")
+}
+
 func (b *linuxSecureBackend) ExecuteCommand(parent context.Context, spec CommandSpec) (CommandResult, error) {
 	runCtx, cancel := context.WithTimeout(parent, spec.Timeout)
 	defer cancel()

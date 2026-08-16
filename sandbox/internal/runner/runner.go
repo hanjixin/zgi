@@ -159,6 +159,7 @@ type backend interface {
 	Name() string
 	Run(context.Context, Request, string, bool, time.Duration, int, int) (Result, error)
 	ExecuteCommand(context.Context, CommandSpec) (CommandResult, error)
+	StartProcess(context.Context, ProcessSpec) (*ProcessSession, error)
 }
 
 func NewService(maxWorkers int, timeout time.Duration, outputCap int) *Service {
