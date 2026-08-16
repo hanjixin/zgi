@@ -39,6 +39,24 @@ func TestNormalizeCreateRejectsNetworkWhenBackendCannotEnforcePolicy(t *testing.
 	}
 }
 
+func TestNormalizeCreateAllowsAgentSessionNetworkOnNonEnforcingBackend(t *testing.T) {
+	cfg := config.FromEnv()
+	cfg.RuntimeBackend = "preview"
+	service := NewService(cfg)
+
+	decision, err := service.NormalizeCreate("session", 60, true, "agent-session", "stdlib", 0, "", 0)
+	if err != nil {
+		t.Fatalf("expected agent-session network policy to be creatable on preview backend, got %v", err)
+	}
+	if !decision.NetworkEnabled || decision.NetworkPolicy != "agent-session" {
+		t.Fatalf("expected agent-session network decision, got %+v", decision)
+	}
+
+	if _, err := service.NormalizeCreate("session", 60, true, "workflow-safe", "stdlib", 0, "", 0); err == nil {
+		t.Fatal("expected workflow-safe network policy to still require enforcement")
+	}
+}
+
 func TestNormalizeCreateRecordsDependencyProfileVersionAndRejectsUnavailableProfiles(t *testing.T) {
 	service := NewService(config.FromEnv())
 
@@ -330,7 +348,7 @@ func TestNetworkPolicySurfaceReportsBackendEnforcement(t *testing.T) {
 		t.Fatalf("expected preview snapshot to report network_policy_enforced=false, got %#v", previewLimits.NetworkPolicyEnforced)
 	}
 	networkProfiles := previewSnapshot["network_profiles"].([]NetworkProfile)
-	if len(networkProfiles) != 3 {
+	if len(networkProfiles) != 4 {
 		t.Fatalf("expected network profiles, got %#v", networkProfiles)
 	}
 	if networkProfiles[0].Name != "deny-by-default" || !networkProfiles[0].Default || networkProfiles[0].NetworkEnabled {
@@ -344,6 +362,15 @@ func TestNetworkPolicySurfaceReportsBackendEnforcement(t *testing.T) {
 	}
 	if len(networkProfiles[1].AllowedProtocols) != 1 || networkProfiles[1].AllowedProtocols[0] != "https" || len(networkProfiles[1].DeniedCIDRRanges) == 0 {
 		t.Fatalf("expected workflow-safe protocol and denied range policy, got %#v", networkProfiles[1])
+	}
+	if !networkProfiles[1].RequiresEnforcement {
+		t.Fatalf("expected workflow-safe to require enforcement, got %#v", networkProfiles[1])
+	}
+	if networkProfiles[3].Name != "agent-session" || !networkProfiles[3].NetworkEnabled {
+		t.Fatalf("expected agent-session egress policy fields, got %#v", networkProfiles[3])
+	}
+	if networkProfiles[3].RequiresEnforcement {
+		t.Fatalf("expected agent-session to not require enforcement, got %#v", networkProfiles[3])
 	}
 	previewEnforcement := previewSnapshot["network_enforcement"].(map[string]any)
 	if previewEnforcement["runtime_backend"] != "preview-process" || previewEnforcement["network_policy_enforced"] != false || previewEnforcement["network_enabled_requests_rejected"] != true {

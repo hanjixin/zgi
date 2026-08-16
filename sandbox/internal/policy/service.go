@@ -105,6 +105,7 @@ type NetworkProfile struct {
 	DeniedCIDRRanges     []string `json:"denied_cidr_ranges"`
 	DNSBehavior          string   `json:"dns_behavior"`
 	MaxRequestDurationMS int      `json:"max_request_duration_ms"`
+	RequiresEnforcement  bool     `json:"requires_enforcement"`
 }
 
 type CreateDecision struct {
@@ -307,6 +308,7 @@ func NewService(cfg config.Config) *Service {
 				DeniedCIDRRanges:     defaultDeniedCIDRRanges(),
 				DNSBehavior:          "disabled",
 				MaxRequestDurationMS: 0,
+				RequiresEnforcement:  false,
 			},
 			{
 				Name:                 "workflow-safe",
@@ -318,6 +320,7 @@ func NewService(cfg config.Config) *Service {
 				DeniedCIDRRanges:     defaultDeniedCIDRRanges(),
 				DNSBehavior:          "resolve-and-check-denied-ranges",
 				MaxRequestDurationMS: 5000,
+				RequiresEnforcement:  true,
 			},
 			{
 				Name:                 "interactive-preview",
@@ -329,6 +332,19 @@ func NewService(cfg config.Config) *Service {
 				DeniedCIDRRanges:     defaultDeniedCIDRRanges(),
 				DNSBehavior:          "resolve-and-check-denied-ranges",
 				MaxRequestDurationMS: 10000,
+				RequiresEnforcement:  true,
+			},
+			{
+				Name:                 "agent-session",
+				Default:              false,
+				NetworkEnabled:       true,
+				AllowedHosts:         []string{},
+				AllowedPorts:         []int{80, 443, 3000, 2670, 3101},
+				AllowedProtocols:     []string{"http", "https"},
+				DeniedCIDRRanges:     defaultDeniedCIDRRanges(),
+				DNSBehavior:          "resolve-and-check-denied-ranges",
+				MaxRequestDurationMS: 30000,
+				RequiresEnforcement:  false,
 			},
 		},
 		commandProfiles: map[string]CommandLimits{
@@ -849,7 +865,7 @@ func (s *Service) NormalizeCreate(profile string, ttlSeconds int, networkEnabled
 	if networkEnabled && !s.networkPolicyAllowsEgress(policyName) {
 		return CreateDecision{}, errors.New("the selected network policy does not allow outbound network access")
 	}
-	if networkEnabled && !s.runtimeBackendEnforcesNetworkPolicy() {
+	if networkEnabled && s.networkPolicyRequiresEnforcement(policyName) && !s.runtimeBackendEnforcesNetworkPolicy() {
 		return CreateDecision{}, fmt.Errorf("runtime backend %q does not enforce network policy", s.normalizedRuntimeBackend())
 	}
 
@@ -1400,6 +1416,15 @@ func (s *Service) networkPolicyAllowsEgress(policyName string) bool {
 		}
 	}
 	return false
+}
+
+func (s *Service) networkPolicyRequiresEnforcement(policyName string) bool {
+	for _, item := range s.networkProfiles {
+		if item.Name == policyName {
+			return item.RequiresEnforcement
+		}
+	}
+	return true
 }
 
 func defaultDeniedCIDRRanges() []string {

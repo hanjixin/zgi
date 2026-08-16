@@ -50,10 +50,17 @@ func (s *Server) handleAgentBoxCreate(w http.ResponseWriter, r *http.Request) {
 		ttl = s.config.AgentBoxTTLSeconds
 	}
 
+	networkPolicy := ""
+	if req.NetworkEnabled {
+		// Agent boxes need egress to the LLM gateway + zgi-tools MCP bridge,
+		// which the session profile's deny-by-default policy would block.
+		networkPolicy = "agent-session"
+	}
 	box, err := s.lifecycle.Create(lifecycle.CreateRequest{
 		RuntimeProfile: "session",
 		TTLSeconds:     ttl,
 		NetworkEnabled: req.NetworkEnabled,
+		NetworkPolicy:  networkPolicy,
 		OrganizationID: req.OrganizationID,
 		WorkspaceID:    req.WorkspaceID,
 		UserID:         req.UserID,
