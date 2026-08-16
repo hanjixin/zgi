@@ -41,18 +41,18 @@ var webFS embed.FS
 const statusClientClosedRequest = 499
 
 type Server struct {
-	config             config.Config
-	store              *storage.Store
-	runner             *runner.Service
-	lifecycle          *lifecycle.Manager
-	executor           *executor.Service
-	observer           *observer.Recorder
-	policy             *policy.Service
-	blueprint          catalog.Blueprint
-	mux                *http.ServeMux
-	agentProcesses     map[string]*runner.ProcessSession
-	agentProcessMu     sync.RWMutex
-	agentProcessSem    chan struct{}
+	config          config.Config
+	store           *storage.Store
+	runner          *runner.Service
+	lifecycle       *lifecycle.Manager
+	executor        *executor.Service
+	observer        *observer.Recorder
+	policy          *policy.Service
+	blueprint       catalog.Blueprint
+	mux             *http.ServeMux
+	agentProcesses  map[string]*runner.ProcessSession
+	agentProcessMu  sync.RWMutex
+	agentProcessSem chan struct{}
 }
 
 func NewServer(cfg config.Config) (*Server, error) {
@@ -105,17 +105,17 @@ func NewServer(cfg config.Config) (*Server, error) {
 	}
 
 	s := &Server{
-		config:           cfg,
-		store:            store,
-		runner:           runnerService,
-		lifecycle:        manager,
-		executor:         executor.NewService(manager, runnerService, recorder, policyService),
-		observer:         recorder,
-		policy:           policyService,
-		blueprint:        catalog.DefaultBlueprint(),
-		mux:              http.NewServeMux(),
-		agentProcesses:   map[string]*runner.ProcessSession{},
-		agentProcessSem:  make(chan struct{}, cfg.MaxAgentProcesses),
+		config:          cfg,
+		store:           store,
+		runner:          runnerService,
+		lifecycle:       manager,
+		executor:        executor.NewService(manager, runnerService, recorder, policyService),
+		observer:        recorder,
+		policy:          policyService,
+		blueprint:       catalog.DefaultBlueprint(),
+		mux:             http.NewServeMux(),
+		agentProcesses:  map[string]*runner.ProcessSession{},
+		agentProcessSem: make(chan struct{}, cfg.MaxAgentProcesses),
 	}
 	s.registerRoutes()
 	return s, nil
