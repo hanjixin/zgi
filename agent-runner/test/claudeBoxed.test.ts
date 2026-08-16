@@ -36,3 +36,30 @@ test('toSpawnedProcess exposes the boxed streams and forwards kill', async () =>
   spawned.emit('exit', 0, null);
   assert.deepEqual(exitCodes, [0]);
 });
+
+test('toSpawnedProcess bridges a resolved handle.exited to the exit event', async () => {
+  const handle = fakeHandle({ exited: Promise.resolve(0) });
+  const spawned = toSpawnedProcess(handle);
+
+  const exitEvents: Array<[number | null, unknown]> = [];
+  spawned.on('exit', (code, signal) => exitEvents.push([code, signal]));
+
+  await new Promise((r) => setImmediate(r));
+
+  assert.deepEqual(exitEvents, [[0, null]]);
+  assert.equal(spawned.exitCode, 0);
+});
+
+test('toSpawnedProcess bridges a rejected handle.exited to the error event', async () => {
+  const boom = new Error('boom');
+  const handle = fakeHandle({ exited: Promise.reject(boom) });
+  const spawned = toSpawnedProcess(handle);
+
+  const errors: unknown[] = [];
+  spawned.on('error', (err) => errors.push(err));
+
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0], boom);
+});
