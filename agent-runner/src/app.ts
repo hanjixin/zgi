@@ -56,7 +56,7 @@ export function createApp(): Express {
     // than replacing it.
     runReq.env = { ...(process.env as Record<string, string>), ...runReq.env };
 
-    if (runReq.sandbox) {
+    if (runReq.sandbox && !boxManager) {
       const client = new SandboxClient({ baseUrl: runReq.sandbox.url, apiKey: runReq.sandbox.api_key });
       boxManager = new BoxManager(client);
     }
