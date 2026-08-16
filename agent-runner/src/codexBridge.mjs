@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 // Executable that the codex SDK spawns when codexPathOverride is set. The SDK
 // invokes this as: <bridge> exec --experimental-json … — we forward those argv
 // into a `codex` process running inside the zgi-sandbox agent box and bridge
