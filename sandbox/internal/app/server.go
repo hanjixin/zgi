@@ -40,15 +40,17 @@ var webFS embed.FS
 const statusClientClosedRequest = 499
 
 type Server struct {
-	config    config.Config
-	store     *storage.Store
-	runner    *runner.Service
-	lifecycle *lifecycle.Manager
-	executor  *executor.Service
-	observer  *observer.Recorder
-	policy    *policy.Service
-	blueprint catalog.Blueprint
-	mux       *http.ServeMux
+	config             config.Config
+	store              *storage.Store
+	runner             *runner.Service
+	lifecycle          *lifecycle.Manager
+	executor           *executor.Service
+	observer           *observer.Recorder
+	policy             *policy.Service
+	blueprint          catalog.Blueprint
+	mux                *http.ServeMux
+	agentProcesses     map[string]*runner.ProcessSession
+	agentProcessSem    chan struct{}
 }
 
 func NewServer(cfg config.Config) (*Server, error) {
@@ -101,15 +103,17 @@ func NewServer(cfg config.Config) (*Server, error) {
 	}
 
 	s := &Server{
-		config:    cfg,
-		store:     store,
-		runner:    runnerService,
-		lifecycle: manager,
-		executor:  executor.NewService(manager, runnerService, recorder, policyService),
-		observer:  recorder,
-		policy:    policyService,
-		blueprint: catalog.DefaultBlueprint(),
-		mux:       http.NewServeMux(),
+		config:           cfg,
+		store:            store,
+		runner:           runnerService,
+		lifecycle:        manager,
+		executor:         executor.NewService(manager, runnerService, recorder, policyService),
+		observer:         recorder,
+		policy:           policyService,
+		blueprint:        catalog.DefaultBlueprint(),
+		mux:              http.NewServeMux(),
+		agentProcesses:   map[string]*runner.ProcessSession{},
+		agentProcessSem:  make(chan struct{}, cfg.MaxAgentProcesses),
 	}
 	s.registerRoutes()
 	return s, nil
@@ -1962,6 +1966,18 @@ func (s *Server) authorizedAdmin(r *http.Request) bool {
 	}
 	return r.Header.Get("X-API-Key") == s.config.APIKey
 }
+
+func (s *Server) agentProcessAcquire(ctx context.Context, w http.ResponseWriter) bool {
+	select {
+	case s.agentProcessSem <- struct{}{}:
+		return true
+	default:
+		writeEnvelopeWithMessage(w, http.StatusTooManyRequests, -429, "too many concurrent agent processes", nil)
+		return false
+	}
+}
+
+func (s *Server) agentProcessRelease() { <-s.agentProcessSem }
 
 func (s *Server) readLimitedBody(w http.ResponseWriter, r *http.Request, limit int64) ([]byte, error) {
 	if limit <= 0 {
