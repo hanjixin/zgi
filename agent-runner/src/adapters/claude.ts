@@ -1,13 +1,78 @@
 // Claude Code adapter — drives the real Claude Code CLI through the official
 // @anthropic-ai/claude-agent-sdk (query()). Streams normalized events.
 import { randomUUID } from 'node:crypto';
+import { EventEmitter } from 'node:events';
+import type { Readable, Writable } from 'node:stream';
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
 
 import type { AdapterDeps, McpServerConfig, PermissionDecision, RunRequest } from '../protocol.js';
+import type { ProcessHandle } from '../sandboxClient.js';
 
 export interface AdapterResult {
   sessionId: string | null;
+}
+
+export interface SpawnedProcess {
+  stdin: Writable;
+  stdout: Readable;
+  readonly killed: boolean;
+  readonly exitCode: number | null;
+  readonly signalCode?: NodeJS.Signals | null;
+  kill(signal: NodeJS.Signals): boolean;
+  on(event: 'exit' | 'error', listener: (...args: never[]) => void): void;
+  once(event: 'exit' | 'error', listener: (...args: never[]) => void): void;
+  off(event: 'exit' | 'error', listener: (...args: never[]) => void): void;
+}
+
+/**
+ * Bridge a boxed process handle to the SpawnedProcess shape the
+ * claude-agent-sdk expects for its `spawnClaudeCodeProcess` option. The handle
+ * already owns the CLI's stdio; exit/error events are forwarded from
+ * `handle.exited` to the SDK through the backing EventEmitter.
+ */
+export function toSpawnedProcess(handle: ProcessHandle): SpawnedProcess {
+  const ee = new EventEmitter();
+  let killed = false;
+  const spawned: Omit<SpawnedProcess, 'exitCode'> & {
+    exitCode: number | null;
+    emit(event: 'exit' | 'error', ...args: unknown[]): boolean;
+  } = {
+    stdin: handle.stdin,
+    stdout: handle.stdout,
+    get killed() {
+      return killed;
+    },
+    exitCode: handle.exitCode,
+    signalCode: null,
+    kill(signal: NodeJS.Signals): boolean {
+      killed = true;
+      handle.kill();
+      return true;
+    },
+    on(event, listener) {
+      ee.on(event, listener as (...args: any[]) => void);
+      return spawned;
+    },
+    once(event, listener) {
+      ee.once(event, listener as (...args: any[]) => void);
+      return spawned;
+    },
+    off(event, listener) {
+      ee.off(event, listener as (...args: any[]) => void);
+      return spawned;
+    },
+    emit(event, ...args) {
+      return ee.emit(event, ...args);
+    },
+  };
+  handle.exited.then((code) => {
+    spawned.exitCode = code;
+    ee.emit('exit', code, null);
+  }).catch((err) => {
+    ee.emit('error', err as Error);
+  });
+  return spawned;
 }
 
 /**
@@ -50,8 +115,22 @@ export async function runClaude(req: RunRequest, deps: AdapterDeps): Promise<Ada
     return { behavior: 'deny' as const, updatedPermissions: [{ tool: toolName, mode: 'dontAsk' }] };
   };
 
+  // When the run is sandboxed and a box manager is wired in, spawn the CLI
+  // inside the session's box and hand the boxed handle to the SDK. The box
+  // workspace is the cwd, so the SDK's own cwd is cleared.
+  const boxManager = deps.boxManager;
+  let boxed: ProcessHandle | null = null;
+  if (req.sandbox && boxManager) {
+    const box = await boxManager.ensure(req.sessionId, req);
+    boxed = await boxManager.openProcess(box, {
+      command: 'claude',
+      args: [],
+      env: req.env,
+    });
+  }
+
   const options: Record<string, unknown> = {
-    cwd: req.cwd,
+    cwd: boxed ? '' : req.cwd,
     allowedTools: req.allowedTools,
     disallowedTools: req.disallowedTools,
     permissionMode: req.permissionMode || 'acceptEdits',
@@ -59,6 +138,9 @@ export async function runClaude(req: RunRequest, deps: AdapterDeps): Promise<Ada
     abortController,
     env: req.env,
   };
+  if (boxed) {
+    options.spawnClaudeCodeProcess = () => toSpawnedProcess(boxed);
+  }
   if (req.model) options.model = req.model;
   if (req.resume) options.resume = req.resume;
   if (req.systemPrompt) options.systemPrompt = req.systemPrompt;
