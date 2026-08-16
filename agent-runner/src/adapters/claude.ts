@@ -127,6 +127,9 @@ export async function runClaude(req: RunRequest, deps: AdapterDeps): Promise<Ada
       args: [],
       env: req.env,
     });
+    // Drain the boxed CLI's stderr so its Readable buffer cannot grow without
+    // bound over a long session, and so CLI stderr remains observable in logs.
+    boxed.stderr.pipe(process.stderr);
   }
 
   const options: Record<string, unknown> = {

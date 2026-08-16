@@ -36,7 +36,17 @@ async function main() {
   process.on('SIGINT', () => handle.kill());
 
   const code = await handle.exited;
-  process.exit(code ?? 1);
+  const finalCode = code ?? 1;
+  // The exit frame resolves before the piped stdout/stderr streams have
+  // necessarily flushed their buffered chunks. process.exit() would kill them
+  // mid-write, truncating the tail of boxed output. An empty write with a
+  // callback fires only after pending writes drain, so flush both streams
+  // before exiting.
+  process.stdout.write('', () => {
+    process.stderr.write('', () => {
+      process.exit(finalCode);
+    });
+  });
 }
 
 // Only run the bridge when this module is the entry point (spawned by the
