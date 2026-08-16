@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 type AgentSource string
@@ -70,6 +71,16 @@ type Agent struct {
 // TableName specifies the table name for Agent.
 func (Agent) TableName() string {
 	return "agents"
+}
+
+// BeforeCreate normalizes runtime_config to valid JSON. The column is
+// jsonb NOT NULL DEFAULT '{}', but a zero-value string would be inserted as
+// "" and Postgres rejects it with "invalid input syntax for type json".
+func (a *Agent) BeforeCreate(tx *gorm.DB) error {
+	if a.RuntimeConfig == "" {
+		a.RuntimeConfig = "{}"
+	}
+	return nil
 }
 
 func (a *Agent) IsWebAppActive() bool {
