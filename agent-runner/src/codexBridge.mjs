@@ -30,6 +30,12 @@ async function main() {
     write(chunk, _enc, cb) {
       handle.stdin.write(chunk, cb);
     },
+    // The codex SDK writes the prompt to our stdin and then closes it; codex
+    // CLI reads its prompt from stdin until EOF before starting, so we must
+    // forward that EOF to the boxed codex or it blocks forever on read.
+    final(cb) {
+      handle.stdin.end(() => cb());
+    },
   });
   process.stdin.pipe(stdinWriter);
   handle.stdout.pipe(process.stdout);

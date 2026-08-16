@@ -106,6 +106,77 @@ func TestAgentBoxProcessChannel(t *testing.T) {
 	}
 }
 
+// TestAgentBoxProcessStdinClose is a regression test for the codex bridge EOF
+// relay: a boxed process whose stdin is closed via /stdin/close must see EOF
+// and exit. Codex-style CLIs read their prompt from stdin to EOF before they
+// start, so without forwarding the SDK's stdin close the boxed codex hangs.
+func TestAgentBoxProcessStdinClose(t *testing.T) {
+	server, err := NewServer(testConfig(t))
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+	ts := httptest.NewServer(server.Handler())
+	defer ts.Close()
+	boxID := createAgentBox(t, ts)
+
+	// cat reads stdin to EOF, echoes what it read, then exits 0.
+	procResp := startAgentProcess(t, ts, boxID, "/bin/cat", nil)
+	defer procResp.Body.Close()
+
+	scanner := bufio.NewScanner(procResp.Body)
+	started, err := readSSEFrame(scanner)
+	if err != nil || started["type"] != "started" {
+		t.Fatalf("expected started frame, got %v err=%v", started, err)
+	}
+	pid := started["pid"].(string)
+
+	stdinReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/agent-boxes/"+boxID+"/process/"+pid+"/stdin", bytes.NewReader([]byte("hello-eof")))
+	stdinResp, err := http.DefaultClient.Do(stdinReq)
+	if err != nil {
+		t.Fatalf("write stdin: %v", err)
+	}
+	io.Copy(io.Discard, stdinResp.Body)
+	stdinResp.Body.Close()
+
+	closeReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/agent-boxes/"+boxID+"/process/"+pid+"/stdin/close", nil)
+	closeResp, err := http.DefaultClient.Do(closeReq)
+	if err != nil {
+		t.Fatalf("close stdin: %v", err)
+	}
+	if closeResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(closeResp.Body)
+		closeResp.Body.Close()
+		t.Fatalf("close stdin: status %d body %s", closeResp.StatusCode, body)
+	}
+	io.Copy(io.Discard, closeResp.Body)
+	closeResp.Body.Close()
+
+	var stdout strings.Builder
+	exit := ""
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) && exit == "" {
+		frame, err := readSSEFrame(scanner)
+		if err != nil {
+			t.Fatalf("read frame: %v", err)
+		}
+		switch ftype, _ := frame["type"].(string); ftype {
+		case "stdout":
+			stdout.WriteString(frame["data"].(string))
+		case "exit":
+			exit = fmt.Sprintf("%v", frame["code"])
+		}
+	}
+	if exit == "" {
+		t.Fatal("no exit frame; boxed process never saw stdin EOF")
+	}
+	if !strings.Contains(stdout.String(), "hello-eof") {
+		t.Fatalf("stdout = %q, want it to contain hello-eof", stdout.String())
+	}
+	if exit != "0" {
+		t.Fatalf("exit = %q, want 0", exit)
+	}
+}
+
 // createAgentBox spins up an agent box and returns its box_id.
 func createAgentBox(t *testing.T, ts *httptest.Server) string {
 	t.Helper()

@@ -121,11 +121,14 @@ func (s *Server) handleAgentBoxByID(w http.ResponseWriter, r *http.Request) {
 		pid := parts[2]
 		switch r.Method {
 		case http.MethodPost:
-			if len(parts) != 4 || parts[3] != "stdin" {
+			switch {
+			case len(parts) == 4 && parts[3] == "stdin":
+				s.handleAgentBoxStdin(w, r, pid)
+			case len(parts) == 5 && parts[3] == "stdin" && parts[4] == "close":
+				s.handleAgentBoxStdinClose(w, r, pid)
+			default:
 				http.NotFound(w, r)
-				return
 			}
-			s.handleAgentBoxStdin(w, r, pid)
 		case http.MethodDelete:
 			s.handleAgentBoxKill(w, r, pid)
 		default:
@@ -297,6 +300,29 @@ func (s *Server) handleAgentBoxStdin(w http.ResponseWriter, r *http.Request, pid
 	defer r.Body.Close()
 	_, err := io.Copy(sess.Stdin, r.Body)
 	if err != nil {
+		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, err.Error(), nil)
+		return
+	}
+	writeEnvelope(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleAgentBoxStdinClose sends EOF to a boxed process by closing its stdin
+// pipe. Codex-style CLIs read their prompt from stdin until EOF before starting,
+// so a bridge that relays stdin data but never forwards the SDK's stdin close
+// leaves the boxed process blocked on read forever.
+func (s *Server) handleAgentBoxStdinClose(w http.ResponseWriter, r *http.Request, pid string) {
+	if !s.authorized(r) {
+		writeEnvelopeWithMessage(w, http.StatusUnauthorized, -401, "unauthorized", nil)
+		return
+	}
+	s.agentProcessMu.RLock()
+	sess, ok := s.agentProcesses[pid]
+	s.agentProcessMu.RUnlock()
+	if !ok {
+		writeEnvelopeWithMessage(w, http.StatusNotFound, -404, "process not found", nil)
+		return
+	}
+	if err := sess.Stdin.Close(); err != nil {
 		writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, err.Error(), nil)
 		return
 	}

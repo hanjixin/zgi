@@ -80,6 +80,15 @@ export class SandboxClient {
     if (!res.ok) throw new Error(`agent process stdin failed (${res.status})`);
   }
 
+  /** Send EOF to a boxed process by closing its stdin pipe. */
+  async closeStdin(boxId: string, pid: string): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/v1/agent-boxes/${boxId}/process/${pid}/stdin/close`, {
+      method: 'POST',
+      headers: this.headers(),
+    });
+    if (!res.ok) throw new Error(`agent process stdin close failed (${res.status})`);
+  }
+
   async killProcess(boxId: string, pid: string): Promise<void> {
     await fetch(`${this.baseUrl}/v1/agent-boxes/${boxId}/process/${pid}`, { method: 'DELETE', headers: this.headers() });
   }
@@ -168,6 +177,18 @@ export class SandboxClient {
         };
         if (pid) send();
         else void pidReady.then(send);
+      },
+      // Forward EOF to the boxed process when the caller ends stdin. Codex-style
+      // CLIs read their prompt from stdin until EOF before starting; Node runs
+      // _final only after pending _write callbacks flush, so ordering is safe.
+      final: (cb) => {
+        const close = (): void => {
+          this.closeStdin(boxId, pid)
+            .then(() => cb())
+            .catch((err) => cb(err as Error));
+        };
+        if (pid) close();
+        else void pidReady.then(close);
       },
     });
 
