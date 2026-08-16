@@ -108,6 +108,8 @@ func (ic *Interceptor) Run(
 	})
 
 	var answer strings.Builder
+	var presentationSeq int64
+	var streamSeq int64
 	var timeline []map[string]interface{}
 	result, err := driver.ChatStream(ctx, req,
 		func(chunk string) error {
@@ -115,10 +117,25 @@ func (ic *Interceptor) Run(
 				return nil
 			}
 			answer.WriteString(chunk)
-			return writer.WriteEvent("", "message", map[string]interface{}{
-				"conversation_id": conversation.ID.String(),
-				"message_id":      messageID.String(),
-				"answer":          chunk,
+			presentationSeq++
+			streamSeq++
+			now := time.Now()
+			textID := fmt.Sprintf("message:%s:text:%d", messageID.String(), presentationSeq)
+			eventID := fmt.Sprintf("%d-%d", now.UnixMilli(), streamSeq)
+			return writer.WriteEvent(eventID, "message", map[string]interface{}{
+				"answer":                 answer.String(),
+				"content_phase":          "provisional",
+				"conversation_id":        conversation.ID.String(),
+				"created_at":             now.Unix(),
+				"created_at_ms":          now.UnixMilli(),
+				"event_id":               eventID,
+				"message_id":             messageID.String(),
+				"presentation_id":        textID,
+				"presentation_sequence":  presentationSeq,
+				"presentation_version":   2,
+				"segment_content":        chunk,
+				"segment_id":             textID,
+				"sequence":               0,
 			})
 		},
 		func(evt agentruntime.StreamEvent) error {
@@ -159,9 +176,11 @@ func (ic *Interceptor) Run(
 	if err := ic.repos.Conversation.FinishActiveMessage(ctx, conversation.ID, messageID); err != nil {
 		return nil, err
 	}
-	_ = writer.WriteEvent("", "message_end", map[string]interface{}{
+	streamSeq++
+	_ = writer.WriteEvent(fmt.Sprintf("%d-%d", time.Now().UnixMilli(), streamSeq), "message_end", map[string]interface{}{
 		"conversation_id": conversation.ID.String(),
 		"message_id":      messageID.String(),
+		"answer":          answer.String(),
 		"status":          status,
 		"metadata":        meta,
 	})
