@@ -20,3 +20,4 @@ scripts/rag_evaluation/middle/
 scripts/rag_evaluation/result/
 agent-runner/node_modules
 .trae/
+web/logs/
