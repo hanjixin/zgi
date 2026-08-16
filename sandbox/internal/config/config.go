@@ -65,6 +65,12 @@ type Config struct {
 	SecureRuntimeOpenFileLimit                 int
 	ProxyTimeout                               int
 	EgressProxyMaxBodyBytes                    int64
+	// Agent boxes (coding-agent runtime). AgentCLIDir is a host directory
+	// (e.g. /usr/local/bin) containing the claude/codex binaries, ro-bound
+	// into linux-secure agent boxes at /opt/zgi/agent-cli.
+	AgentBoxTTLSeconds int
+	MaxAgentProcesses  int
+	AgentCLIDir        string
 }
 
 func FromEnv() Config {
@@ -127,6 +133,9 @@ func FromEnv() Config {
 		SecureRuntimeOpenFileLimit:                 getEnvIntAllowZero("ZGI_SANDBOX_SECURE_RUNTIME_OPEN_FILE_LIMIT", 128),
 		ProxyTimeout:                               getEnvInt("ZGI_SANDBOX_PROXY_TIMEOUT_SECONDS", 20),
 		EgressProxyMaxBodyBytes:                    getEnvInt64("ZGI_SANDBOX_EGRESS_PROXY_MAX_BODY_BYTES", 1024*1024),
+		AgentBoxTTLSeconds:                         getEnvInt("ZGI_SANDBOX_AGENT_BOX_TTL_SECONDS", 1800),
+		MaxAgentProcesses:                          getEnvIntAllowZero("ZGI_SANDBOX_MAX_AGENT_PROCESSES", 4),
+		AgentCLIDir:                                getEnv("ZGI_SANDBOX_AGENT_CLI_DIR", ""),
 	}
 }
 

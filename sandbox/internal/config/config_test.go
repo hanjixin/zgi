@@ -231,6 +231,22 @@ func TestFromEnvReadsEgressProxyBodyLimit(t *testing.T) {
 	}
 }
 
+func TestAgentBoxConfigDefaults(t *testing.T) {
+	t.Setenv("ZGI_SANDBOX_AGENT_BOX_TTL_SECONDS", "")
+	t.Setenv("ZGI_SANDBOX_MAX_AGENT_PROCESSES", "")
+	t.Setenv("ZGI_SANDBOX_AGENT_CLI_DIR", "")
+	cfg := FromEnv()
+	if cfg.AgentBoxTTLSeconds != 1800 {
+		t.Fatalf("AgentBoxTTLSeconds default = %d, want 1800", cfg.AgentBoxTTLSeconds)
+	}
+	if cfg.MaxAgentProcesses != 4 {
+		t.Fatalf("MaxAgentProcesses default = %d, want 4", cfg.MaxAgentProcesses)
+	}
+	if cfg.AgentCLIDir != "" {
+		t.Fatalf("AgentCLIDir default = %q, want empty", cfg.AgentCLIDir)
+	}
+}
+
 func TestPublicSnapshotOmitsSecrets(t *testing.T) {
 	cfg := Config{
 		Port:                       "2660",
