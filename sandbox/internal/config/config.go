@@ -56,6 +56,7 @@ type Config struct {
 	PublicBaseURL                              string
 	Environment                                string
 	RuntimeBackend                             string
+	EnforceNetworkPolicy                       bool
 	SecureRootFS                               string
 	DependencyRootFSDir                        string
 	BwrapBinary                                string
@@ -124,6 +125,7 @@ func FromEnv() Config {
 		PublicBaseURL:                              getEnv("ZGI_SANDBOX_PUBLIC_BASE_URL", advertiseURL),
 		Environment:                                getEnv("ZGI_SANDBOX_ENV", "local"),
 		RuntimeBackend:                             getEnv("ZGI_SANDBOX_RUNTIME_BACKEND", "preview"),
+		EnforceNetworkPolicy:                       getEnvBool("ZGI_SANDBOX_ENFORCE_NETWORK_POLICY", false),
 		SecureRootFS:                               getEnv("ZGI_SANDBOX_SECURE_ROOTFS", ""),
 		DependencyRootFSDir:                        getEnv("ZGI_SANDBOX_DEPENDENCY_ROOTFS_DIR", ""),
 		BwrapBinary:                                getEnv("ZGI_SANDBOX_BWRAP_BINARY", "bwrap"),
@@ -249,7 +251,10 @@ func (c Config) RuntimeBackendName() string {
 }
 
 func (c Config) NetworkPolicyEnforced() bool {
-	return c.RuntimeBackendName() == "linux-secure"
+	// ZGI_SANDBOX_ENFORCE_NETWORK_POLICY lets dev environments (process backend)
+	// exercise the network-enabled agent box path even though the local backend
+	// cannot truly enforce egress rules.
+	return c.EnforceNetworkPolicy || c.RuntimeBackendName() == "linux-secure"
 }
 
 func validatePort(value string) error {

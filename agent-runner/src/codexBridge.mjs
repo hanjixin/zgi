@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env -S node --import tsx
 // Executable that the codex SDK spawns when codexPathOverride is set. The SDK
 // invokes this as: <bridge> exec --experimental-json … — we forward those argv
 // into a `codex` process running inside the zgi-sandbox agent box and bridge
@@ -22,7 +22,9 @@ async function main() {
   }
   const client = createSandboxClient({ baseUrl, apiKey });
   const args = parseCodexBridgeArgs(process.argv);
-  const handle = await client.openProcess(boxId, { command: 'codex', args });
+  // Pass the inherited env so the boxed codex has PATH + the gateway API key
+  // (OPENAI_API_KEY) it needs to reach the LLM gateway / MCP bridge.
+  const handle = await client.openProcess(boxId, { command: 'codex', args, env: process.env });
 
   const stdinWriter = new Writable({
     write(chunk, _enc, cb) {
