@@ -19,6 +19,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -50,6 +51,7 @@ type Server struct {
 	blueprint          catalog.Blueprint
 	mux                *http.ServeMux
 	agentProcesses     map[string]*runner.ProcessSession
+	agentProcessMu     sync.RWMutex
 	agentProcessSem    chan struct{}
 }
 
